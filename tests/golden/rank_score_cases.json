@@ -1,0 +1,79 @@
+[
+  {
+    "id": "case_01_perfect_config",
+    "description": "Config perfeita: median=1.0, failure_rate=0.0, win_rate=1.0, critical=0.0 → RS = 0.50*1.0 + 0.20*(1-0.0) + 0.15*1.0 - 0.15*0.0 = 0.85",
+    "inputs": {
+      "median_score": 1.0,
+      "failure_rate": 0.0,
+      "win_rate": 1.0,
+      "critical_failure_rate": 0.0
+    },
+    "expected": 0.85
+  },
+  {
+    "id": "case_02_worst_config_negative",
+    "description": "Config péssima com crítico=1.0: median=0.0, failure_rate=1.0, win_rate=0.0, critical=1.0 → RS = 0.0 + 0.0 + 0.0 - 0.15*1.0 = -0.15 (NEGATIVO, sem clamp)",
+    "inputs": {
+      "median_score": 0.0,
+      "failure_rate": 1.0,
+      "win_rate": 0.0,
+      "critical_failure_rate": 1.0
+    },
+    "expected": -0.15
+  },
+  {
+    "id": "case_03_moderate_good",
+    "description": "Config moderadamente boa: median=0.7, failure_rate=0.2, win_rate=0.6, critical=0.1 → RS = 0.50*0.7 + 0.20*0.8 + 0.15*0.6 - 0.15*0.1 = 0.35+0.16+0.09-0.015 = 0.585",
+    "inputs": {
+      "median_score": 0.7,
+      "failure_rate": 0.2,
+      "win_rate": 0.6,
+      "critical_failure_rate": 0.1
+    },
+    "expected": 0.585
+  },
+  {
+    "id": "case_04_mixed_moderate",
+    "description": "Config intermediária: median=0.5, failure_rate=0.5, win_rate=0.4, critical=0.3 → RS = 0.50*0.5 + 0.20*0.5 + 0.15*0.4 - 0.15*0.3 = 0.25+0.10+0.06-0.045 = 0.365",
+    "inputs": {
+      "median_score": 0.5,
+      "failure_rate": 0.5,
+      "win_rate": 0.4,
+      "critical_failure_rate": 0.3
+    },
+    "expected": 0.365
+  },
+  {
+    "id": "case_05_high_critical_negative",
+    "description": "Alta taxa crítica com baixa performance → NEGATIVO: median=0.1, failure_rate=0.9, win_rate=0.1, critical=1.0 → RS = 0.50*0.1+0.20*0.1+0.15*0.1-0.15*1.0 = 0.05+0.02+0.015-0.15 = -0.065",
+    "inputs": {
+      "median_score": 0.1,
+      "failure_rate": 0.9,
+      "win_rate": 0.1,
+      "critical_failure_rate": 1.0
+    },
+    "expected": -0.065
+  },
+  {
+    "id": "case_06_nan_median",
+    "description": "median_score=NaN → RankScore=NaN (ADR-007, NaN propagation, sem imputação)",
+    "inputs": {
+      "median_score": null,
+      "failure_rate": 0.5,
+      "win_rate": 0.5,
+      "critical_failure_rate": 0.2
+    },
+    "expected": null
+  },
+  {
+    "id": "case_07_nan_win_rate",
+    "description": "win_rate=NaN → RankScore=NaN (ADR-007, qualquer insumo NaN propaga)",
+    "inputs": {
+      "median_score": 0.7,
+      "failure_rate": 0.2,
+      "win_rate": null,
+      "critical_failure_rate": 0.1
+    },
+    "expected": null
+  }
+]

@@ -4,5 +4,18 @@ from inteligenciomica_eval.domain.services.final_score import (
     DEFAULT_WEIGHTS,
     FinalScoreCalculator,
 )
+from inteligenciomica_eval.domain.services.rank_score import (
+    DEFAULT_WEIGHTS as RANK_DEFAULT_WEIGHTS,
+)
+from inteligenciomica_eval.domain.services.rank_score import (
+    RankScoreCalculator,
+    RankScoreInputs,
+)
 
-__all__ = ["DEFAULT_WEIGHTS", "FinalScoreCalculator"]
+__all__ = [
+    "DEFAULT_WEIGHTS",
+    "RANK_DEFAULT_WEIGHTS",
+    "FinalScoreCalculator",
+    "RankScoreCalculator",
+    "RankScoreInputs",
+]
