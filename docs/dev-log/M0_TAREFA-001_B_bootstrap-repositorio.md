@@ -1,4 +1,4 @@
-# M0_TAREFA-001_B — Verificação do Bootstrap do Repositório
+# M0_TAREFA-001_B — Reauditoria do Bootstrap do Repositório
 
 **Data**: 2026-05-23  
 **Milestone**: M0 — Fundação  
@@ -12,39 +12,31 @@
 
 ## Objetivo
 
-Auditar o diff da TAREFA-001 contra `docs/arquitetura_detalhada_validacao_inteligenciomica.md`,
-`CLAUDE.md`, DoD §14.2, nota de operacionalização do fluxo dev↔verify e critérios do prompt
-de verificação, sem reescrever a implementação.
+Reauditar a TAREFA-001 após as correções registradas em
+`docs/dev-log/M0_TAREFA-001_A_bootstrap-repositorio.md`, usando como baseline:
 
----
+- `docs/arquitetura_detalhada_validacao_inteligenciomica.md`
+- `CLAUDE.md`
+- checklist do `prompt_M001B`
 
-## Escopo Auditado
-
-- Diff entre `c721864` e `HEAD` (bootstrap do repositório).
-- `docs/arquitetura_detalhada_validacao_inteligenciomica.md`:
-  - §8 Estrutura de código detalhada
-  - §11.6 CI
-  - §14.2 DoD transversal
-  - §14.3 TAREFA-001
-  - §16.1–16.4 ciclo de verificação
-- `CLAUDE.md`:
-  - layout
-  - ordem de validação
-  - padrão de nome do dev log
+Sem reescrever a implementação; apenas verificar se as divergências apontadas anteriormente
+foram de fato corrigidas.
 
 ---
 
 ## Veredito
 
-**FAIL**
+**PASS**
 
-Há **2 bloqueadores** no bootstrap:
+Os bloqueadores do relatório anterior foram resolvidos:
 
-1. O workflow de CI não sobe um ambiente com o tooling de dev exigido pelos próprios passos.
-2. O `.importlinter` não implementa integralmente a garantia arquitetural descrita no documento principal.
+1. `uv sync --frozen` agora produz um ambiente que executa `lint-imports` e `pytest -n auto`
+   sem depender de `--all-extras`.
+2. O `.importlinter` agora cobre a lista canônica de libs proibidas e adiciona um contrato
+   `layers` coerente com a regra "application só importa domain" registrada em `CLAUDE.md`.
 
-Sem resolver esses pontos, o PR não atende o critério "CI verde em repositório vazio" da
-TAREFA-001 nem estabelece os contratos de camada prometidos pelo bootstrap.
+Permanece uma divergência **importante**, mas não bloqueadora: as dependências do
+`pyproject.toml` continuam com limites mínimos (`>=`) em vez de pins estritos.
 
 ---
 
@@ -52,13 +44,13 @@ TAREFA-001 nem estabelece os contratos de camada prometidos pelo bootstrap.
 
 ### 1. Layout `src` bate com §8? `__init__.py` presentes?
 
-**FAIL parcial**
+**PASS**
 
-- As pastas-base existem em `src/inteligenciomica_eval/` e os `__init__.py` foram criados.
+- `src/inteligenciomica_eval/` contém `domain/`, `application/`, `infrastructure/`,
+  `visualization/` e `cli.py`.
+- `tests/unit/domain/`, `tests/unit/application/` e `tests/integration/adapters/` existem.
 - `config/` e `docs/adr/` existem.
-- O espelhamento de testes pedido em `tests/unit/{domain,application}/` e
-  `tests/integration/adapters/` **não** foi criado; há apenas `tests/unit/` flat e
-  `tests/integration/__init__.py`.
+- Os `__init__.py` esperados estão presentes.
 
 ### 2. `pyproject`: Python 3.11+, entry point `ielm-eval`, deps runtime/dev pinadas, markers pytest?
 
@@ -67,57 +59,55 @@ TAREFA-001 nem estabelece os contratos de camada prometidos pelo bootstrap.
 - `requires-python = ">=3.11"` está correto.
 - O entry point `ielm-eval = "inteligenciomica_eval.cli:app"` está correto.
 - Os markers `unit`, `integration` e `e2e` estão registrados.
-- As dependências não estão pinadas no `pyproject.toml`.
-- A pilha de dev/test do documento inclui `mutmut`, mas ela não foi declarada.
+- A migração para `[dependency-groups].dev` foi realizada.
+- `mutmut` foi adicionado ao grupo `dev`.
+- As dependências continuam com `>=`, não com pins estritos.
 
 ### 3. `mypy` strict em `src`? coverage com `branch=true` e `fail_under=85`?
 
 **PASS**
 
-- `mypy` está com `strict = true`, `files = ["src"]`.
+- `mypy` está em modo strict para `src`.
 - Coverage está com `branch = true` e `fail_under = 85`.
 
-### 4. `.importlinter` tem EXATAMENTE os 3 contratos forbidden descritos, com lista canônica de libs proibidas?
+### 4. `.importlinter` tem os contratos exigidos, lista canônica de libs proibidas e `root_package` correto?
 
-**FAIL**
+**PASS**
 
-- O arquivo tem exatamente 3 contratos `forbidden`.
 - `root_package = inteligenciomica_eval` está correto.
-- A lista implementada é **mais fraca** do que a arquitetura exige: faltam libs explicitamente
-  citadas como proibidas fora de `infrastructure/adapters/`, como `qdrant_client`, `openai`,
-  `ragas`, `deepeval` e `statsmodels`.
-- O texto arquitetural também afirma que `application` "só importa domain", o que não é
-  garantido pelos contratos atuais.
+- Há 3 contratos `forbidden`, conforme o checklist original.
+- A lista canônica de libs proibidas foi ampliada com `qdrant_client`, `openai`, `ragas`,
+  `deepeval` e `statsmodels`.
+- Há também 1 contrato adicional do tipo `layers`, alinhado ao `CLAUDE.md` atual e coerente
+  com a exigência "application só importa domain".
 
-### 5. CI roda, na ordem, os gates pedidos?
+### 5. CI roda, na ordem, `ruff check`, `ruff format --check`, `mypy --strict`, `lint-imports`, `pytest` com cobertura e `-n auto`?
 
-**FAIL**
+**PASS**
 
-- A ordem no YAML está correta.
-- Na execução real, `uv sync --frozen` não disponibiliza `lint-imports` nem `pytest-xdist`,
-  então os passos seguintes falham no mesmo ambiente que a CI cria.
+- A ordem no workflow está correta.
+- Todos os comandos executaram com sucesso no ambiente padrão criado por `uv sync --frozen`.
 
 ### 6. CLI: `--help`, `version`, `KeyboardInterrupt` tratado? Smoke test cobre isso?
 
-**FAIL parcial**
+**PASS**
 
 - `uv run ielm-eval --help` funciona.
 - `uv run ielm-eval version` funciona.
-- `KeyboardInterrupt` é tratado no bloco `__main__`.
-- O smoke test **não cobre** o caminho de interrupção.
+- `KeyboardInterrupt` é tratado em `main()`.
+- O smoke test cobre explicitamente a saída com código `130`.
 
 ### 7. DoD §14.2 integralmente?
 
-**FAIL**
+**PASS parcial**
 
-- `from __future__ import annotations`: OK nos módulos Python criados.
-- Type hints na API pública: OK no escopo entregue.
-- Docstrings públicas: OK no escopo entregue.
+- `from __future__ import annotations`: OK nos módulos Python auditados.
+- Type hints em APIs públicas do escopo entregue: OK.
+- Docstrings no escopo entregue: OK.
 - Sem segredos hardcoded: OK.
-- Testes happy+borda+erro: **não integral**; só há smoke tests de `help`/`version` e um teste
-  de importação de namespaces.
-- `ruff`/`mypy`: OK.
-- `import-linter`/`pytest -n auto`: não passam no ambiente produzido por `uv sync --frozen`.
+- Gates `ruff`, `mypy`, `import-linter` e `pytest` passam.
+- Testes cobrem happy path e o cenário de interrupção do CLI.
+- A única pendência remanescente é a ausência de pins estritos no `pyproject.toml`.
 
 ---
 
@@ -125,58 +115,32 @@ TAREFA-001 nem estabelece os contratos de camada prometidos pelo bootstrap.
 
 | Critério | Arquivo:linha | Gravidade | Divergência |
 |---|---|---|---|
-| CI verde em repositório vazio | `.github/workflows/ci.yml:27` | bloqueador | O job instala o ambiente com `uv sync --frozen`, mas os próximos passos exigem ferramentas declaradas apenas em `optional-dependencies.dev`; no ambiente criado, `lint-imports` não existe e `pytest -n auto` falha por ausência de `pytest-xdist`. |
-| Tooling de dev incompatível com os próprios comandos documentados | `pyproject.toml:26` | bloqueador | A separação atual entre runtime e `dev` torna inválido o fluxo afirmado no bootstrap: o ambiente padrão não contém todos os binários necessários para CI/README/dev log. |
-| Garantia arquitetural de imports está incompleta | `.importlinter:13` | bloqueador | A arquitetura exige que `domain`/`application` não importem `qdrant_client`, `openai`, `ragas`, `deepeval` ou `statsmodels` fora de `infrastructure/adapters`, mas esses pacotes não aparecem em `forbidden_modules`. |
-| `application` não está restrita a "só importa domain" | `.importlinter:28` | bloqueador | O documento principal declara essa garantia, mas o contrato atual apenas veda `infrastructure`, `cli` e algumas libs de I/O; imports third-party adicionais ainda passariam. |
-| Estrutura de testes não espelha `src` como §8 pede | `tests/unit/test_cli_smoke.py:1` | importante | O layout esperado é `tests/unit/{domain,application}/` e `tests/integration/adapters/`; o PR entrega apenas `tests/unit/` flat e `tests/integration/__init__.py`. |
-| Dependências não estão pinadas no `pyproject` | `pyproject.toml:12` | importante | O documento arquitetural pede deps com pin; o arquivo usa faixas soltas ou sem versão explícita em runtime e dev. |
-| Dependência de tooling `mutmut` ausente | `pyproject.toml:27` | importante | A stack de dev/test do documento inclui `mutmut`, mas o bootstrap não a declara. |
-| README instrui um fluxo que não funciona | `README.md:21` | importante | A seção "Development" afirma "Install with dev dependencies" usando `uv sync --frozen`, mas esse comando não instala o tooling que as linhas seguintes invocam (`lint-imports`, `pytest -n auto`). |
-| Smoke test não cobre `KeyboardInterrupt` | `tests/unit/test_cli_smoke.py:15` | importante | O CLI trata interrupção em `src/inteligenciomica_eval/cli.py:35`, mas o teste de smoke cobre apenas `--help` e `version`, deixando o caminho de erro do bootstrap sem validação. |
-| DoD de testes happy+borda+erro não foi atingido | `tests/unit/test_cli_smoke.py:15` | importante | Os testes entregues não cobrem cenário de erro nem borda relevante do CLI; `tests/unit/test_imports.py` só força cobertura estrutural. |
-| Dev log A afirma validações que não reproduzem com `uv sync --frozen` | `docs/dev-log/M0_TAREFA-001_A_bootstrap-repositorio.md:159` | importante | O relatório registra `lint-imports` e `pytest` como verdes no fluxo principal, mas isso só ocorre após instalar extras; com o comando aceito pela CI/TAREFA-001, a reprodução falha. |
-| Dev log A afirma "CI verde" sem sustentar o ambiente real da workflow | `docs/dev-log/M0_TAREFA-001_A_bootstrap-repositorio.md:171` | importante | O status reportado não bate com a execução reproduzida do workflow descrito no próprio PR. |
-| Dev log A contém afirmação factualmente incorreta sobre `.gitignore` | `docs/dev-log/M0_TAREFA-001_A_bootstrap-repositorio.md:181` | sugestão | O texto diz que `.gitignore` não foi criado, mas o arquivo existe no PR. |
+| Dependências de runtime e dev pinadas | `pyproject.toml:12` | importante | O documento arquitetural usa a convenção de deps com pin; o arquivo atual usa limites mínimos (`>=`) em runtime e dev, não pins estritos. |
 
 ---
 
 ## Comandos Executados
 
-### Ambiente padrão do bootstrap
-
 | Comando | Resultado |
 |---|---|
-| `uv sync --frozen` | ✅ `Checked 24 packages in 2ms` |
+| `uv sync --frozen` | ✅ `Checked 70 packages in 4ms` |
 | `uv run ruff check .` | ✅ `All checks passed!` |
-| `uv run ruff format --check .` | ✅ `19 files already formatted` |
+| `uv run ruff format --check .` | ✅ `22 files already formatted` |
 | `uv run mypy --strict src` | ✅ `Success: no issues found in 11 source files` |
-| `uv run lint-imports` | ❌ `Failed to spawn: lint-imports` |
-| `uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=85 -n auto` | ❌ `pytest: error: unrecognized arguments: -n` |
-| `uv run pre-commit install` | ✅ `pre-commit installed at .git/hooks/pre-commit` |
+| `uv run lint-imports` | ✅ `4 kept, 0 broken` |
+| `uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=85 -n auto` | ✅ `6 passed`, cobertura total `90.00%` |
 | `uv run ielm-eval --help` | ✅ mostra grupo Typer com subcomando `version` |
 | `uv run ielm-eval version` | ✅ imprime `inteligenciomica-eval 0.1.0` |
-
-### Confirmação da causa raiz com extras
-
-| Comando | Resultado |
-|---|---|
-| `uv sync --frozen --all-extras` | ✅ instalou 39 pacotes adicionais de tooling |
-| `uv run lint-imports` | ✅ `3 kept, 0 broken` |
-| `uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=85 -n auto` | ✅ `5 passed`, cobertura total `88.24%` |
-
-**Conclusão operacional:** os comandos de validação funcionam **somente** após instalar os extras;
-portanto o problema central não é o conteúdo dos testes/linters, mas a maneira como o bootstrap
-monta o ambiente padrão e como a CI o reproduz.
 
 ---
 
 ## Resumo Final
 
-O bootstrap está próximo do objetivo, mas ainda não cumpre integralmente a TAREFA-001.
-Os dois bloqueadores são:
+As correções registradas no documento A foram majoritariamente realizadas e os problemas
+bloqueadores do relatório B anterior deixaram de existir no estado atual do repositório.
 
-1. O ambiente criado por `uv sync --frozen` não sustenta a própria pipeline declarada.
-2. O `.importlinter` entrega uma proteção de arquitetura mais fraca do que a especificação promete.
+O bootstrap agora atende os gates operacionais da TAREFA-001 e, por isso, o veredito é
+**PASS**.
 
-Enquanto esses pontos permanecerem, o veredito continua **FAIL**.
+A única divergência remanescente é de rigor de versionamento: o `pyproject.toml` ainda não usa
+pins estritos para runtime e dev dependencies.

@@ -9,6 +9,7 @@ def test_all_submodules_are_importable() -> None:
     import inteligenciomica_eval
     import inteligenciomica_eval.application
     import inteligenciomica_eval.domain
+    import inteligenciomica_eval.domain.errors
     import inteligenciomica_eval.domain.services
     import inteligenciomica_eval.infrastructure
     import inteligenciomica_eval.infrastructure.adapters
