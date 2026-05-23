@@ -73,6 +73,55 @@ class InvalidSeedError(InteligenciomicaEvalError):
         self.seed = seed
 
 
+class InvalidPhaseError(InteligenciomicaEvalError):
+    """Fase de experimento inválida — deve ser ``'A'`` ou ``'B'``.
+
+    Args:
+        phase: valor fornecido que falhou na validação.
+    """
+
+    def __init__(self, phase: str) -> None:
+        super().__init__(f"Invalid experiment phase: {phase!r}. Expected 'A' or 'B'.")
+        self.phase = phase
+
+
+class RetrievalTupleLengthMismatchError(InteligenciomicaEvalError):
+    """Tuplas de retrieval com comprimentos diferentes.
+
+    As três tuplas (``retrieved_chunk_ids``, ``retrieved_chunks_text``,
+    ``retrieval_scores``) devem ter o mesmo número de elementos.
+
+    Args:
+        chunk_ids_len: comprimento de ``retrieved_chunk_ids``.
+        chunks_text_len: comprimento de ``retrieved_chunks_text``.
+        scores_len: comprimento de ``retrieval_scores``.
+    """
+
+    def __init__(
+        self, chunk_ids_len: int, chunks_text_len: int, scores_len: int
+    ) -> None:
+        super().__init__(
+            f"Retrieval tuples must have equal length; got "
+            f"chunk_ids={chunk_ids_len}, chunks_text={chunks_text_len}, "
+            f"scores={scores_len}."
+        )
+        self.chunk_ids_len = chunk_ids_len
+        self.chunks_text_len = chunks_text_len
+        self.scores_len = scores_len
+
+
+class InvalidCriticalFailureFlagError(InteligenciomicaEvalError):
+    """Flag de falha crítica fora do domínio ``{0, 1}``.
+
+    Args:
+        flag: valor fornecido que falhou na validação.
+    """
+
+    def __init__(self, flag: int) -> None:
+        super().__init__(f"Invalid critical_failure_flag: {flag!r}. Expected 0 or 1.")
+        self.flag = flag
+
+
 class WeightsDoNotSumToOneError(InteligenciomicaEvalError):
     """Pesos de métricas não somam 1.0 dentro da tolerância esperada.
 
