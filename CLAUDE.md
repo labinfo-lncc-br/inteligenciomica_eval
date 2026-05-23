@@ -133,7 +133,24 @@ if __name__ == "__main__":  # pragma: no cover
 
 ---
 
-## 7. Dev Log — Padrão de Nomes de Relatórios
+## 7. Versionamento de Dependências
+
+**Decisão**: `pyproject.toml` usa faixas mínimas (`>=`) para runtime e dev deps;
+`uv.lock` é a fonte de verdade para reprodutibilidade.
+
+- **Faixas mínimas no pyproject** declaram a intenção semântica (versão mínima compatível)
+  sem bloquear atualizações de segurança em ambientes que não usam o lock.
+- **`uv.lock` commitado** garante builds byte-a-byte idênticos em todos os ambientes
+  que executam `uv sync --frozen` — CI, containers, máquinas de dev.
+- Pins estritos em `pyproject.toml` (ex: `pandas==2.0.3`) seriam redundantes com o lock
+  e dificultariam bumps de versão.
+
+**Quando revisar**: executar `uv lock --upgrade` periodicamente (ou por dependabot/renovate)
+e commitar o `uv.lock` atualizado após validar os gates.
+
+---
+
+## 8. Dev Log — Padrão de Nomes de Relatórios
 
 Localização: `docs/dev-log/`
 
@@ -180,7 +197,7 @@ M1_TAREFA-010_B_revisao-testes.md
 
 ---
 
-## 8. Instalação e Comandos Rápidos
+## 9. Instalação e Comandos Rápidos
 
 ```bash
 uv sync --frozen          # instala dependências (usa uv.lock)
