@@ -90,11 +90,21 @@ Performance e imutabilidade reforçada. Compatível com `dataclasses.replace()` 
 
 ---
 
+## Problemas Encontrados e Soluções
+
+| Problema | Solução |
+|----------|---------|
+| Pre-commit hook `ruff-format` reformatou `errors.py` e `entities.py` no primeiro `git commit`, causando falha do hook | Re-staged os dois arquivos reformatados e criou novo commit; segunda tentativa passou em todos os hooks |
+
+**Detalhe**: ruff format colapsou a condição multilinhas em `EvaluationResult.__post_init__` (`not in (0, 1,)`) e condensou strings de `__init__` em `InvalidPhaseError` e `InvalidCriticalFailureFlagError`. O comportamento correto é sempre rodar `uv run ruff format` antes de `git add` para evitar a iteração extra.
+
+---
+
 ## Validação (DoD)
 
 ```
 uv run ruff check src/inteligenciomica_eval/domain/entities.py     → All checks passed
-uv run ruff format --check src/inteligenciomica_eval/domain/entities.py → Already formatted
+uv run ruff format src/inteligenciomica_eval/domain/entities.py    → 1 file reformatted (pre-commit)
 uv run mypy --strict src/inteligenciomica_eval/domain/entities.py  → Success: no issues found
 uv run lint-imports                                                → 4 kept, 0 broken
 uv run pytest --cov=src --cov-fail-under=85 -n auto
