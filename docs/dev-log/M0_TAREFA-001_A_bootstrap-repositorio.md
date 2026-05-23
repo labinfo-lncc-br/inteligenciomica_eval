@@ -178,8 +178,10 @@ Resultado final: **88.24%**.
 
 ## Observações para Próximas Tarefas
 
-1. **`.gitignore`** não foi criado — recomendado antes do primeiro `git add` massivo
-   (ignorar `.venv/`, `__pycache__/`, `.mypy_cache/`, `.ruff_cache/`, `.coverage`, `*.xml`).
+1. **`.gitignore`** foi criado durante a execução desta tarefa, antes do commit inicial,
+   cobrindo `.venv/`, `__pycache__/`, `.mypy_cache/`, `.ruff_cache/`, `.coverage` e `*.xml`.
+   *(Nota: o rascunho inicial do relatório afirmava incorretamente que o arquivo não havia
+   sido criado; corrigido pelo relatório de auditoria M0_TAREFA-001_B.)*
 
 2. **Stubs de tipo** para pandas e pyarrow estão configurados com `ignore_missing_imports = true`
    no mypy. Se a camada `infrastructure/` usar pandas/pyarrow intensivamente, avaliar

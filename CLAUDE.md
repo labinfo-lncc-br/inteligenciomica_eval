@@ -13,7 +13,7 @@ decisões de arquitetura e convenções que devem ser respeitadas em **todas** a
 | Build backend   | **hatchling** (configurado em `pyproject.toml`)            |
 | Lint + format   | **ruff** (lint e format unificados)                        |
 | Type checker    | **mypy --strict** (apenas em `src/`, não em `tests/`)      |
-| Contratos arq.  | **import-linter** (`.importlinter` com 3 contratos)        |
+| Contratos arq.  | **import-linter** (`.importlinter` com 4 contratos)        |
 | Testes          | **pytest** + **pytest-cov** + **pytest-xdist**             |
 | Pre-commit      | ruff-lint · ruff-format · mypy (via hook `local`)          |
 | Python          | **3.11+** (runtime); ambiente local usa 3.12               |
@@ -49,7 +49,10 @@ src/inteligenciomica_eval/   ← pacote principal (src layout)
 tests/
   conftest.py
   unit/                      ← ≥ 70% dos testes, < 10 ms cada
+    domain/                  ← espelha src/domain/
+    application/             ← espelha src/application/
   integration/               ← adapters reais, containers
+    adapters/                ← espelha src/infrastructure/adapters/
   e2e/                       ← fluxos fim-a-fim
   fakes/                     ← implementações in-memory das ports
   factories/                 ← builders de dados de teste
@@ -64,13 +67,14 @@ docs/
 
 ## 3. Contratos de Importação (import-linter)
 
-Três contratos declarados em `.importlinter` (root_package = inteligenciomica_eval):
+Quatro contratos declarados em `.importlinter` (root_package = inteligenciomica_eval):
 
-1. **domain-forbidden**: `domain` NÃO importa `application`, `infrastructure`, `cli` nem libs de I/O (pandas, polars, pyarrow, sqlalchemy, httpx, requests, boto3).
-2. **application-forbidden**: `application` NÃO importa `infrastructure`, `cli` nem libs de I/O.
+1. **domain-forbidden**: `domain` NÃO importa `application`, `infrastructure`, `cli` nem libs de I/O (pandas, polars, pyarrow, sqlalchemy, httpx, requests, boto3, qdrant_client, openai, ragas, deepeval, statsmodels).
+2. **application-forbidden**: `application` NÃO importa `infrastructure`, `cli` nem libs de I/O (mesma lista).
 3. **infrastructure-forbidden**: `infrastructure` NÃO importa `cli`.
+4. **architecture-layers** (tipo `layers`): enforce hierarquia estrita `domain < application < infrastructure` — `application` só pode importar `domain`.
 
-Ao adicionar uma nova lib de I/O, atualizar a lista `forbidden_modules` nos contratos 1 e 2.
+Ao adicionar uma nova lib de I/O, atualizar `forbidden_modules` nos contratos 1 e 2.
 
 ---
 
@@ -91,7 +95,8 @@ Ao adicionar uma nova lib de I/O, atualizar a lista `forbidden_modules` nos cont
 o app ser o próprio comando (sem subcomandos). Isso quebra `ielm-eval version`.
 
 **Regra**: sempre adicionar `@app.callback()` antes do primeiro `@app.command()` para
-forçar o modo de grupo (multi-subcomando):
+forçar o modo de grupo (multi-subcomando). Extrair também uma função `main()` para
+permitir testes do caminho de `KeyboardInterrupt`:
 
 ```python
 @app.callback()
@@ -101,6 +106,17 @@ def _main() -> None:
 @app.command()
 def meu_comando() -> None:
     ...
+
+def main() -> None:
+    """Entry point wrapper — testável via mocker.patch."""
+    try:
+        app()
+    except KeyboardInterrupt:
+        _err_console.print("\n[yellow]Interrupted.[/yellow]")
+        sys.exit(130)
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
 ```
 
 ---
@@ -109,6 +125,8 @@ def meu_comando() -> None:
 
 - `branch = true`, `source = ["src/inteligenciomica_eval"]`, `fail_under = 85`.
 - `pytest-cov` é um pacote **separado** de `coverage[toml]` — ambos devem estar em `dev` deps.
+- Dev deps ficam em `[dependency-groups] dev` (PEP 735), **não** em `[project.optional-dependencies]`.
+  Com `[dependency-groups]`, `uv sync --frozen` instala runtime + dev por padrão — não precisa de `--all-extras`.
 - Módulos de esqueleto (`__init__.py` vazios) precisam ser importados em algum teste para
   entrarem na contagem. Ver `tests/unit/test_imports.py`.
 - `exclude_lines` inclui `if __name__ == .__main__.:` e `if TYPE_CHECKING:`.

@@ -21,6 +21,11 @@ forbidden_modules =
     httpx
     requests
     boto3
+    qdrant_client
+    openai
+    ragas
+    deepeval
+    statsmodels
 
 # ---------------------------------------------------------------------------
 # Contract 2: application must not import infrastructure, cli, or I/O libs
@@ -40,6 +45,11 @@ forbidden_modules =
     httpx
     requests
     boto3
+    qdrant_client
+    openai
+    ragas
+    deepeval
+    statsmodels
 
 # ---------------------------------------------------------------------------
 # Contract 3: infrastructure must not import cli
@@ -51,3 +61,14 @@ source_modules =
     inteligenciomica_eval.infrastructure
 forbidden_modules =
     inteligenciomica_eval.cli
+
+# ---------------------------------------------------------------------------
+# Contract 4: strict layer ordering — application may only import domain
+# ---------------------------------------------------------------------------
+[importlinter:contract:architecture-layers]
+name = Clean Architecture strict layer ordering (domain < application < infrastructure)
+type = layers
+layers =
+    inteligenciomica_eval.infrastructure
+    inteligenciomica_eval.application
+    inteligenciomica_eval.domain

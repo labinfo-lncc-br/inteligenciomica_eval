@@ -32,9 +32,14 @@ def version() -> None:
     _console.print(f"inteligenciomica-eval {pkg_version}")
 
 
-if __name__ == "__main__":  # pragma: no cover
+def main() -> None:
+    """CLI entry point wrapper with explicit KeyboardInterrupt handling."""
     try:
         app()
     except KeyboardInterrupt:
         _err_console.print("\n[yellow]Interrupted.[/yellow]")
         sys.exit(130)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
