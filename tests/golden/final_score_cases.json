@@ -1,0 +1,107 @@
+[
+  {
+    "id": "case_01_all_ones",
+    "description": "All scored metrics = 1.0 → FinalScore = 1.0 (upper bound)",
+    "metrics": {
+      "answer_correctness": 1.0,
+      "answer_similarity": 1.0,
+      "faithfulness": 1.0,
+      "context_precision": 1.0,
+      "context_recall": 1.0,
+      "answer_relevancy": 1.0,
+      "bertscore_f1": 1.0,
+      "rubric_biomed_score": 1.0
+    },
+    "expected": 1.0
+  },
+  {
+    "id": "case_02_all_zeros",
+    "description": "All scored metrics = 0.0 → FinalScore = 0.0 (lower bound)",
+    "metrics": {
+      "answer_correctness": 0.0,
+      "answer_similarity": 0.0,
+      "faithfulness": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "answer_relevancy": 0.0,
+      "bertscore_f1": 0.0,
+      "rubric_biomed_score": 0.0
+    },
+    "expected": 0.0
+  },
+  {
+    "id": "case_03_only_answer_correctness",
+    "description": "Only answer_correctness = 1.0 (highest weight 0.45), rest = 0.0",
+    "metrics": {
+      "answer_correctness": 1.0,
+      "answer_similarity": 0.0,
+      "faithfulness": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "answer_relevancy": 0.0,
+      "bertscore_f1": 0.0,
+      "rubric_biomed_score": 0.0
+    },
+    "expected": 0.45
+  },
+  {
+    "id": "case_04_mixed_moderate",
+    "description": "Mixed moderate scores: 0.45*0.80 + 0.20*0.60 + 0.15*0.70 + 0.10*0.50 + 0.05*0.40 + 0.05*0.30 = 0.670",
+    "metrics": {
+      "answer_correctness": 0.8,
+      "answer_similarity": 0.5,
+      "faithfulness": 0.6,
+      "context_precision": 0.4,
+      "context_recall": 0.5,
+      "answer_relevancy": 0.3,
+      "bertscore_f1": 0.5,
+      "rubric_biomed_score": 0.7
+    },
+    "expected": 0.67
+  },
+  {
+    "id": "case_05_mixed_high",
+    "description": "Mixed high scores: 0.45*0.90 + 0.20*0.80 + 0.15*0.70 + 0.10*0.60 + 0.05*0.50 + 0.05*0.40 = 0.775",
+    "metrics": {
+      "answer_correctness": 0.9,
+      "answer_similarity": 0.95,
+      "faithfulness": 0.8,
+      "context_precision": 0.5,
+      "context_recall": 0.6,
+      "answer_relevancy": 0.4,
+      "bertscore_f1": 0.9,
+      "rubric_biomed_score": 0.7
+    },
+    "expected": 0.775
+  },
+  {
+    "id": "case_06_nan_faithfulness",
+    "description": "faithfulness = NaN (weight 0.20 > 0) → FinalScore = NaN (ADR-007)",
+    "metrics": {
+      "answer_correctness": 0.8,
+      "answer_similarity": 0.5,
+      "faithfulness": null,
+      "context_precision": 0.4,
+      "context_recall": 0.5,
+      "answer_relevancy": 0.3,
+      "bertscore_f1": 0.5,
+      "rubric_biomed_score": 0.7
+    },
+    "expected": null
+  },
+  {
+    "id": "case_07_nan_only_auxiliary",
+    "description": "answer_similarity=NaN, bertscore_f1=NaN (weight=0) → NOT NaN; scored metrics all 0.5 → 0.5",
+    "metrics": {
+      "answer_correctness": 0.5,
+      "answer_similarity": null,
+      "faithfulness": 0.5,
+      "context_precision": 0.5,
+      "context_recall": 0.5,
+      "answer_relevancy": 0.5,
+      "bertscore_f1": null,
+      "rubric_biomed_score": 0.5
+    },
+    "expected": 0.5
+  }
+]
