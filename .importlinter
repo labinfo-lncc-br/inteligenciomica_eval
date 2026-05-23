@@ -1,0 +1,53 @@
+[importlinter]
+root_package = inteligenciomica_eval
+include_external_packages = True
+
+# ---------------------------------------------------------------------------
+# Contract 1: domain must not import application, infrastructure, cli, or I/O libs
+# ---------------------------------------------------------------------------
+[importlinter:contract:domain-forbidden]
+name = Domain layer must not import application, infrastructure, CLI, or I/O libs
+type = forbidden
+source_modules =
+    inteligenciomica_eval.domain
+forbidden_modules =
+    inteligenciomica_eval.application
+    inteligenciomica_eval.infrastructure
+    inteligenciomica_eval.cli
+    pandas
+    polars
+    pyarrow
+    sqlalchemy
+    httpx
+    requests
+    boto3
+
+# ---------------------------------------------------------------------------
+# Contract 2: application must not import infrastructure, cli, or I/O libs
+# ---------------------------------------------------------------------------
+[importlinter:contract:application-forbidden]
+name = Application layer must not import infrastructure, CLI, or I/O libs
+type = forbidden
+source_modules =
+    inteligenciomica_eval.application
+forbidden_modules =
+    inteligenciomica_eval.infrastructure
+    inteligenciomica_eval.cli
+    pandas
+    polars
+    pyarrow
+    sqlalchemy
+    httpx
+    requests
+    boto3
+
+# ---------------------------------------------------------------------------
+# Contract 3: infrastructure must not import cli
+# ---------------------------------------------------------------------------
+[importlinter:contract:infrastructure-forbidden]
+name = Infrastructure layer must not import CLI
+type = forbidden
+source_modules =
+    inteligenciomica_eval.infrastructure
+forbidden_modules =
+    inteligenciomica_eval.cli

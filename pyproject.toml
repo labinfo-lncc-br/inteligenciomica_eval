@@ -1,0 +1,115 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inteligenciomica-eval"
+version = "0.1.0"
+description = "Subsistema de Validação InteligenciÔmica"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2",
+    "pydantic-settings",
+    "structlog",
+    "typer",
+    "rich",
+    "pandas",
+    "polars",
+    "pyarrow",
+]
+
+[project.scripts]
+ielm-eval = "inteligenciomica_eval.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-xdist",
+    "pytest-mock",
+    "hypothesis",
+    "coverage[toml]",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "import-linter",
+    "pre-commit",
+    "polyfactory",
+    "freezegun",
+    "respx",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inteligenciomica_eval"]
+
+# ---------------------------------------------------------------------------
+# Ruff — lint + format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+src = ["src"]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "T20", # flake8-print (no bare print() in production code)
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "E501", # line length handled by formatter
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["inteligenciomica_eval"]
+
+# ---------------------------------------------------------------------------
+# Mypy — strict mode on src only
+# ---------------------------------------------------------------------------
+[tool.mypy]
+strict = true
+python_version = "3.11"
+mypy_path = ["src"]
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pandas.*", "pyarrow.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "unit: Unit tests — fast, no I/O",
+    "integration: Integration tests — real adapters, containers",
+    "e2e: End-to-end tests — full-stack, slow",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["src/inteligenciomica_eval"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
