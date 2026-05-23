@@ -11,6 +11,7 @@ def test_all_submodules_are_importable() -> None:
     import inteligenciomica_eval.domain
     import inteligenciomica_eval.domain.errors
     import inteligenciomica_eval.domain.services
+    import inteligenciomica_eval.domain.value_objects
     import inteligenciomica_eval.infrastructure
     import inteligenciomica_eval.infrastructure.adapters
     import inteligenciomica_eval.infrastructure.config

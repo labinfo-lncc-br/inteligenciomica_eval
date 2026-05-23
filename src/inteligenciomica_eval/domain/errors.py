@@ -59,6 +59,20 @@ class ScoreOutOfRangeError(InteligenciomicaEvalError):
         self.max_val = max_val
 
 
+class InvalidSeedError(InteligenciomicaEvalError):
+    """Semente de reprodutibilidade inválida — deve ser inteiro não-negativo (>= 0).
+
+    Args:
+        seed: valor fornecido que falhou na validação.
+    """
+
+    def __init__(self, seed: int) -> None:
+        super().__init__(
+            f"Invalid seed value: {seed}. Seed must be a non-negative integer (>= 0)."
+        )
+        self.seed = seed
+
+
 class WeightsDoNotSumToOneError(InteligenciomicaEvalError):
     """Pesos de métricas não somam 1.0 dentro da tolerância esperada.
 
