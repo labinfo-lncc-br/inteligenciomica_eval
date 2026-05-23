@@ -8,6 +8,8 @@
 **Dependências**: nenhuma (raiz do DAG)  
 **ADRs referenciados**: ADR-001, ADR-008  
 **Camada**: tooling  
+**Auditoria**: `M0_TAREFA-001_B` — corrigiu 2 bloqueadores e 5 itens importantes;
+este documento reflete o **estado final** após as correções.
 
 ---
 
@@ -27,14 +29,15 @@ CI, pre-commit e contratos de arquitetura via import-linter.
 | Arquivo | Descrição |
 |---------|-----------|
 | `pyproject.toml` | Configuração central: build (hatchling), deps runtime + dev, ruff, mypy, pytest, coverage |
-| `uv.lock` | Lock file gerado por `uv sync --all-extras` (62 pacotes, 1450 linhas) |
+| `uv.lock` | Lock file gerado por `uv sync` (70 pacotes) |
 | `CLAUDE.md` | Guia persistente de desenvolvimento para o Claude Code |
 | `README.md` | Quickstart copy-paste |
-| `.importlinter` | 3 contratos de arquitetura (forbidden) |
+| `.gitignore` | Ignora `.venv/`, `__pycache__/`, caches de ferramentas e artefatos de CI |
+| `.importlinter` | 4 contratos de arquitetura (3 forbidden + 1 layers) |
 | `.pre-commit-config.yaml` | Hooks: ruff-lint, ruff-format, mypy (local/system) |
 | `.github/workflows/ci.yml` | Pipeline GitHub Actions com uv |
 | `src/inteligenciomica_eval/__init__.py` | Expõe `__version__` via importlib.metadata |
-| `src/inteligenciomica_eval/cli.py` | App Typer com `@app.callback()` + comando `version` |
+| `src/inteligenciomica_eval/cli.py` | App Typer com `@app.callback()` + comando `version` + `main()` |
 | `src/inteligenciomica_eval/domain/__init__.py` | Esqueleto camada domain |
 | `src/inteligenciomica_eval/domain/services/__init__.py` | Esqueleto |
 | `src/inteligenciomica_eval/application/__init__.py` | Esqueleto |
@@ -45,10 +48,13 @@ CI, pre-commit e contratos de arquitetura via import-linter.
 | `src/inteligenciomica_eval/infrastructure/config/__init__.py` | Esqueleto |
 | `src/inteligenciomica_eval/visualization/__init__.py` | Esqueleto |
 | `tests/conftest.py` | Fixtures compartilhadas (vazio no bootstrap) |
-| `tests/unit/test_cli_smoke.py` | 4 testes de smoke para `--help` e `version` |
+| `tests/unit/test_cli_smoke.py` | 5 testes de smoke para `--help`, `version` e `KeyboardInterrupt` |
 | `tests/unit/test_imports.py` | 1 teste que importa todos os sub-pacotes (cobre esqueleto) |
 | `tests/unit/__init__.py` | |
+| `tests/unit/domain/__init__.py` | Espelha `src/domain/` |
+| `tests/unit/application/__init__.py` | Espelha `src/application/` |
 | `tests/integration/__init__.py` | |
+| `tests/integration/adapters/__init__.py` | Espelha `src/infrastructure/adapters/` |
 | `tests/e2e/__init__.py` | |
 | `tests/fakes/__init__.py` | |
 | `tests/factories/__init__.py` | |
@@ -62,8 +68,8 @@ CI, pre-commit e contratos de arquitetura via import-linter.
 | Arquivo | Motivo |
 |---------|--------|
 | `src/inteligenciomica_eval/__init__.py` | Ruff auto-fix: split `from importlib.metadata import PackageNotFoundError, version as _pkg_version` em duas linhas (isort I001) |
-| `src/inteligenciomica_eval/cli.py` | Adição de `_err_console` (mypy: `Console.print` não tem kwarg `err=`); adição de `@app.callback()` (Typer single-command bug); adição de `# pragma: no cover` no bloco `__main__` |
-| `pyproject.toml` | Adição de `pytest-cov` ao dev extras (ausente na especificação original) |
+| `src/inteligenciomica_eval/cli.py` | Adição de `_err_console` (mypy: `Console.print` sem kwarg `err=`); adição de `@app.callback()` (Typer single-command bug); extração de `main()` para testabilidade do `KeyboardInterrupt` |
+| `pyproject.toml` | Adição de `pytest-cov`; migração de `[project.optional-dependencies]` para `[dependency-groups] dev` (PEP 735); adição de `mutmut`; pins de versão mínima em runtime e dev deps |
 
 ---
 
@@ -80,10 +86,12 @@ inválido. Solução: adicionar `@app.callback()` com corpo-docstring antes do p
 `@app.command()` para forçar modo grupo (multi-subcomando). O entry point permanece
 `cli:app` (o objeto `typer.Typer` é callable).
 
-### D3 — KeyboardInterrupt via `# pragma: no cover`
-O bloco `if __name__ == "__main__":` nunca é executado via `CliRunner` nos testes.
-Marcado com `# pragma: no cover` e adicionado `if __name__ == .__main__.:` ao
-`exclude_lines` do coverage. Isso preserva a cobertura acima de 85% sem testes artificiais.
+### D3 — KeyboardInterrupt: `main()` + `# pragma: no cover`
+O bloco `if __name__ == "__main__":` nunca é executado via `CliRunner`. Solução em
+duas partes: (a) extrair `main()` como função pública testável via `mocker.patch`
+— cobre o caminho de `KeyboardInterrupt` com `sys.exit(130)`; (b) manter
+`if __name__ == "__main__":` marcado com `# pragma: no cover`, chamando apenas
+`main()`. O `exclude_lines` do coverage também exclui `if __name__ == .__main__.:`.
 
 ### D4 — Stderr via `Console(stderr=True)`
 `rich.Console.print()` não tem kwarg `err=`. Para mensagens de erro/interrupção,
@@ -107,6 +115,21 @@ esteja ativo/presente (após `uv sync`). Alternativa seria `language: python` co
 ### D8 — Import-linter: `include_external_packages = True`
 Necessário para que os contratos `forbidden` possam referenciar pacotes externos
 (pandas, polars, pyarrow, etc.) e não apenas módulos internos do pacote.
+
+### D9 — Dev deps em `[dependency-groups] dev` (PEP 735)
+Dev deps declaradas em `[dependency-groups] dev` em vez de `[project.optional-dependencies]`.
+Com `[dependency-groups]`, `uv sync --frozen` instala runtime + dev por padrão — a CI
+não precisa de `--all-extras`. Usar `uv sync --no-dev` para ambientes de produção.
+*(Corrição apontada pela auditoria B: com `optional-dependencies`, `uv sync --frozen`
+não instalava o tooling e os passos de CI falhavam.)*
+
+### D10 — Quatro contratos import-linter (3 forbidden + 1 layers)
+Além dos 3 contratos `forbidden` da especificação, adicionado um contrato do tipo
+`layers` que enforça a hierarquia estrita `domain < application < infrastructure`.
+Isso garante que `application` só importe `domain` — garantia que os contratos
+`forbidden` sozinhos não provêem. Os contratos `forbidden` também cobrem
+`qdrant_client`, `openai`, `ragas`, `deepeval` e `statsmodels`.
+*(Correção apontada pela auditoria B.)*
 
 ---
 
@@ -137,14 +160,27 @@ um "grupo" onde `version` é um subcomando nomeado.
 **Sintoma**: `pytest: error: unrecognized arguments: --cov=src`.  
 **Causa**: `coverage[toml]` instala apenas a lib `coverage`; o plugin pytest
 (`pytest-cov`) é um pacote separado.  
-**Solução**: Adicionado `"pytest-cov"` ao `[project.optional-dependencies] dev`.
+**Solução**: Adicionado `"pytest-cov"` ao `[dependency-groups] dev`.
 
 ### P5 — Coverage 45% (abaixo do threshold 85%)
 **Sintoma**: Após corrigir P3 e P4, coverage total era 45%.  
 **Causa**: Os 9 `__init__.py` de esqueleto nunca eram importados durante os testes,
 sendo contados como 0% cobertos cada (1 statement perdido cada).  
 **Solução**: Criado `tests/unit/test_imports.py` que importa todos os sub-pacotes.
-Resultado final: **88.24%**.
+
+### P6 — `uv sync --frozen` não instalava tooling de dev
+**Sintoma**: `lint-imports` e `pytest -n auto` falhavam no ambiente gerado pela CI.  
+**Causa**: Dev deps declaradas em `[project.optional-dependencies] dev` não são
+instaladas por `uv sync --frozen`; exigem `--all-extras`.  
+**Solução** *(auditoria B)*: Migrar para `[dependency-groups] dev` (PEP 735) — passa a ser
+instalado por padrão pelo `uv sync --frozen`.
+
+### P7 — `.importlinter` com lista de libs proibidas incompleta
+**Sintoma**: `qdrant_client`, `openai`, `ragas`, `deepeval`, `statsmodels` não constavam
+em `forbidden_modules`; garantia "application só importa domain" ausente.  
+**Causa**: Lista inicial derivada apenas das deps de runtime do `pyproject.toml`,
+sem consultar a arquitetura detalhada do projeto.  
+**Solução** *(auditoria B)*: Adicionadas as 5 libs; adicionado contrato `layers`.
 
 ---
 
@@ -153,12 +189,12 @@ Resultado final: **88.24%**.
 | Check | Comando | Resultado |
 |-------|---------|-----------|
 | from \_\_future\_\_ | inspeção | ✅ todos os módulos |
-| type hints | mypy --strict src | ✅ 0 errors |
+| type hints | `mypy --strict src` | ✅ 0 errors, 11 source files |
 | ruff lint | `uv run ruff check .` | ✅ All checks passed |
-| ruff format | `uv run ruff format --check .` | ✅ 19 files formatted |
-| import contracts | `uv run lint-imports` | ✅ 3 KEPT, 0 broken |
-| pytest | `uv run pytest ... --cov-fail-under=85` | ✅ 5 passed, 88% |
-| `uv sync --frozen` | funcionamento | ✅ 62 packages |
+| ruff format | `uv run ruff format --check .` | ✅ 22 files formatted |
+| import contracts | `uv run lint-imports` | ✅ 4 KEPT, 0 broken |
+| pytest | `uv run pytest ... --cov-fail-under=85` | ✅ 6 passed, 90% |
+| `uv sync --frozen` | instalação sem extras | ✅ 70 packages |
 | sem segredos | inspeção | ✅ |
 
 ---
@@ -172,7 +208,7 @@ Resultado final: **88.24%**.
 | pre-commit hooks instaláveis (`pre-commit install`) | ✅ |
 | `uv run ielm-eval --help` funciona | ✅ |
 | `uv run ielm-eval version` funciona | ✅ imprime `inteligenciomica-eval 0.1.0` |
-| `lint-imports` passa com 3 contratos | ✅ |
+| `lint-imports` passa com 4 contratos | ✅ |
 
 ---
 
@@ -180,8 +216,8 @@ Resultado final: **88.24%**.
 
 1. **`.gitignore`** foi criado durante a execução desta tarefa, antes do commit inicial,
    cobrindo `.venv/`, `__pycache__/`, `.mypy_cache/`, `.ruff_cache/`, `.coverage` e `*.xml`.
-   *(Nota: o rascunho inicial do relatório afirmava incorretamente que o arquivo não havia
-   sido criado; corrigido pelo relatório de auditoria M0_TAREFA-001_B.)*
+   *(Nota: o rascunho inicial afirmava incorretamente que o arquivo não havia sido criado;
+   corrigido pelo relatório de auditoria M0_TAREFA-001_B.)*
 
 2. **Stubs de tipo** para pandas e pyarrow estão configurados com `ignore_missing_imports = true`
    no mypy. Se a camada `infrastructure/` usar pandas/pyarrow intensivamente, avaliar
