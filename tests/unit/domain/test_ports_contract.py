@@ -138,7 +138,11 @@ class _StubGenerator:
         temperature: float,
     ) -> GenerationOutput:
         return GenerationOutput(
-            text="resposta", tokens_in=10, tokens_out=5, latency_ms=100
+            text="resposta",
+            tokens_in=10,
+            tokens_out=5,
+            latency_ms=100,
+            batch_invariant=False,
         )
 
 
@@ -289,7 +293,11 @@ class TestDTOInstantiation:
 
     def test_generation_output(self) -> None:
         g = GenerationOutput(
-            text="resposta", tokens_in=10, tokens_out=5, latency_ms=200
+            text="resposta",
+            tokens_in=10,
+            tokens_out=5,
+            latency_ms=200,
+            batch_invariant=False,
         )
         assert g.text == "resposta"
         assert g.tokens_in == 10

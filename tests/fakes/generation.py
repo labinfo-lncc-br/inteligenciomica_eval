@@ -94,4 +94,5 @@ class FakeGenerator:
             tokens_in=self._tokens_in,
             tokens_out=self._tokens_out,
             latency_ms=self._latency_ms,
+            batch_invariant=False,
         )

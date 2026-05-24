@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-test123",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "test-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "DNA replication is the process by which a DNA molecule is copied.",
+        "refusal": null
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 128,
+    "completion_tokens": 16,
+    "total_tokens": 144
+  }
+}

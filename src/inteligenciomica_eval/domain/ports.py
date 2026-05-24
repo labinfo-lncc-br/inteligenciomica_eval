@@ -58,12 +58,15 @@ class GenerationOutput:
         tokens_in: número de tokens no prompt de entrada.
         tokens_out: número de tokens gerados na resposta.
         latency_ms: latência de geração em milissegundos.
+        batch_invariant: ``True`` se o juiz usou regime BATCH_INVARIANT (ADR-003);
+            ``False`` para geradores vLLM (§9.2.4).
     """
 
     text: str
     tokens_in: int
     tokens_out: int
     latency_ms: int
+    batch_invariant: bool
 
 
 @dataclass(frozen=True, slots=True)
