@@ -26,6 +26,7 @@ forbidden_modules =
     ragas
     deepeval
     statsmodels
+    yaml
 
 # ---------------------------------------------------------------------------
 # Contract 2: application must not import infrastructure, cli, or I/O libs
@@ -50,6 +51,7 @@ forbidden_modules =
     ragas
     deepeval
     statsmodels
+    yaml
 
 # ---------------------------------------------------------------------------
 # Contract 3: infrastructure must not import cli

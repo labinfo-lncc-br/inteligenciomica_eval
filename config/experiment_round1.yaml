@@ -1,0 +1,51 @@
+# Rodada 1 de avaliação — InteligenciÔmica Eval (§12.1)
+# Endpoints NUNCA entram neste arquivo (ADR-008). Use variáveis de ambiente.
+
+round_id: "round-1"
+
+phases:
+  - "A"
+  - "B"
+
+bases:
+  - "IDx_400k"
+  - "ID_230K"
+
+llms:
+  - "meta-llama/Llama-3.1-8B-Instruct"
+  - "meta-llama/Llama-3.1-70B-Instruct"
+
+seeds:
+  - 42
+  - 123
+  - 456
+
+temperature: 0.0
+
+retrieval:
+  top_k: 5
+  reranker: null
+  embedding_model: "<a-definir>"     # placeholder — definir em TAREFA-301
+  chunk_strategy: "<a-definir>"      # placeholder — definir em TAREFA-301
+
+judge:
+  model: "meta-llama/Llama-3.1-70B-Instruct"
+  endpoint_env: "VLLM_JUDGE_URL"     # nome da env var; valor resolvido em runtime
+  batch_invariant: true              # ADR-003: juiz DEVE ser determinístico
+  temperature: 0.0
+
+scoring:
+  weights:
+    answer_correctness:  0.25
+    answer_similarity:   0.15
+    faithfulness:        0.20
+    context_precision:   0.10
+    context_recall:      0.10
+    answer_relevancy:    0.05
+    bertscore_f1:        0.05
+    rubric_biomed_score: 0.10
+  failure_threshold: 0.30
+
+experiment_b:
+  canonical_context_source: "IDx_400k"
+  canonical_top_k: 5

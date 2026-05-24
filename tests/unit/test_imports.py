@@ -16,6 +16,9 @@ def test_all_submodules_are_importable() -> None:
     import inteligenciomica_eval.infrastructure
     import inteligenciomica_eval.infrastructure.adapters
     import inteligenciomica_eval.infrastructure.config
+    import inteligenciomica_eval.infrastructure.config.provenance
+    import inteligenciomica_eval.infrastructure.config.schema
+    import inteligenciomica_eval.infrastructure.config.settings
     import inteligenciomica_eval.infrastructure.prompts
     import inteligenciomica_eval.infrastructure.repositories
     import inteligenciomica_eval.visualization
