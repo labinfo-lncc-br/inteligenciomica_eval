@@ -1,0 +1,138 @@
+[
+  {
+    "id": "case_01_two_configs_clear_winner",
+    "description": "Two configs (llm-a beats llm-b on all 3 questions). Config A: all scores >= 0.70 → failure_rate=0.0; Config B: 2 of 3 fail. Critical flags set for both. Win-rate: A=1.0, B=0.0.",
+    "threshold": 0.70,
+    "results": [
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q1", "final_score": 0.80, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q2", "final_score": 0.90, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q3", "final_score": 0.70, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-b", "seed": 0, "question_id": "q1", "final_score": 0.60, "critical_failure_flag": 1},
+      {"base": "IDx_400k", "llm": "llm-b", "seed": 0, "question_id": "q2", "final_score": 0.75, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-b", "seed": 0, "question_id": "q3", "final_score": 0.50, "critical_failure_flag": 1}
+    ],
+    "expected": [
+      {
+        "base": "IDx_400k",
+        "llm": "llm-a",
+        "mean_score": 0.8,
+        "median_score": 0.8,
+        "min_score": 0.7,
+        "iqr": 0.1,
+        "failure_rate": 0.0,
+        "critical_failure_rate": 0.0,
+        "win_rate": 1.0,
+        "rank_score": 0.75,
+        "n_observations": 3,
+        "n_excluded_nan": 0
+      },
+      {
+        "base": "IDx_400k",
+        "llm": "llm-b",
+        "mean_score": 0.6166666666666667,
+        "median_score": 0.6,
+        "min_score": 0.5,
+        "iqr": 0.125,
+        "failure_rate": 0.6666666666666666,
+        "critical_failure_rate": 0.6666666666666666,
+        "win_rate": 0.0,
+        "rank_score": 0.26666666666666666,
+        "n_observations": 3,
+        "n_excluded_nan": 0
+      }
+    ]
+  },
+  {
+    "id": "case_02_nan_excluded_single_config",
+    "description": "Single config with one NaN score. NaN row (q2) excluded from numeric aggregates; counted in n_excluded_nan. critical_failure_rate ignores q2 flag=None in denominator. win_rate = 2/3 (wins q1 and q3; q2 has no valid config).",
+    "threshold": 0.70,
+    "results": [
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q1", "final_score": 0.80, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q2", "final_score": null, "critical_failure_flag": null},
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q3", "final_score": 0.70, "critical_failure_flag": 0}
+    ],
+    "expected": [
+      {
+        "base": "IDx_400k",
+        "llm": "llm-a",
+        "mean_score": 0.75,
+        "median_score": 0.75,
+        "min_score": 0.7,
+        "iqr": 0.05,
+        "failure_rate": 0.0,
+        "critical_failure_rate": 0.0,
+        "win_rate": 0.6666666666666666,
+        "rank_score": 0.675,
+        "n_observations": 2,
+        "n_excluded_nan": 1
+      }
+    ]
+  },
+  {
+    "id": "case_03_win_rate_tie_two_configs",
+    "description": "Two configs with identical scores on both questions (exact tie). Each should receive win_rate = 0.5 (tie-splitting: 1/k with k=2). rank_score identical for both.",
+    "threshold": 0.70,
+    "results": [
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q1", "final_score": 0.80, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q2", "final_score": 0.75, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-b", "seed": 0, "question_id": "q1", "final_score": 0.80, "critical_failure_flag": 0},
+      {"base": "IDx_400k", "llm": "llm-b", "seed": 0, "question_id": "q2", "final_score": 0.75, "critical_failure_flag": 0}
+    ],
+    "expected": [
+      {
+        "base": "IDx_400k",
+        "llm": "llm-a",
+        "mean_score": 0.775,
+        "median_score": 0.775,
+        "min_score": 0.75,
+        "iqr": 0.025,
+        "failure_rate": 0.0,
+        "critical_failure_rate": 0.0,
+        "win_rate": 0.5,
+        "rank_score": 0.6625,
+        "n_observations": 2,
+        "n_excluded_nan": 0
+      },
+      {
+        "base": "IDx_400k",
+        "llm": "llm-b",
+        "mean_score": 0.775,
+        "median_score": 0.775,
+        "min_score": 0.75,
+        "iqr": 0.025,
+        "failure_rate": 0.0,
+        "critical_failure_rate": 0.0,
+        "win_rate": 0.5,
+        "rank_score": 0.6625,
+        "n_observations": 2,
+        "n_excluded_nan": 0
+      }
+    ]
+  },
+  {
+    "id": "case_04_all_nan_single_config",
+    "description": "All results have NaN scores. n_observations=0; all numeric aggregates are NaN. critical_failure_rate=NaN (no annotated). win_rate=0.0 (no valid scores). rank_score=NaN via NaN propagation.",
+    "threshold": 0.70,
+    "results": [
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q1", "final_score": null, "critical_failure_flag": null},
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q2", "final_score": null, "critical_failure_flag": null},
+      {"base": "IDx_400k", "llm": "llm-a", "seed": 0, "question_id": "q3", "final_score": null, "critical_failure_flag": null}
+    ],
+    "expected": [
+      {
+        "base": "IDx_400k",
+        "llm": "llm-a",
+        "mean_score": null,
+        "median_score": null,
+        "min_score": null,
+        "iqr": null,
+        "failure_rate": null,
+        "critical_failure_rate": null,
+        "win_rate": 0.0,
+        "rank_score": null,
+        "n_observations": 0,
+        "n_excluded_nan": 3
+      }
+    ]
+  }
+]
