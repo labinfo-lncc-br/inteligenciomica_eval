@@ -2,14 +2,17 @@
 
 Text-based inference (Document query) requires a Qdrant server with an Inference
 API configured (e.g. FastEmbed). Plain testcontainers/qdrant only provides a
-vanilla server, so these tests patch ``_search_async`` to use dense-vector
-``search()`` instead of text-based ``query_points``.  This still exercises:
+vanilla server, so these tests intercept ``client.query_points`` to substitute
+the ``Document(text=…)`` query with a dense float-vector query — the correct API
+in qdrant-client ≥ 1.7 (``search()`` was removed in that release).
 
-- Real TCP connection to Qdrant
-- Collection name lookup via collection_map
-- Upsert + search cycle with real ScoredPoint payloads
-- top_k limiting enforced by the server
-- Score type and ordering guarantees
+``_search_async`` is left **unchanged**, so all production code paths are exercised:
+
+- Collection-name lookup via ``collection_map``
+- ``try/except`` error wrapping into ``RetrievalError``
+- Structured logging (``qdrant_search_completed``)
+- ``ScoredPoint → Chunk → RetrievalResult`` conversion
+- Real TCP connection to Qdrant and server-enforced ``top_k`` / score ordering
 """
 
 from __future__ import annotations
