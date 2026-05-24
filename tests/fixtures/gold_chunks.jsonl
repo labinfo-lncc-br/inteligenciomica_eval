@@ -1,0 +1,3 @@
+{"question_id": "q01", "gold_chunk_ids": ["chunk_abc", "chunk_def", "chunk_ghi"]}
+{"question_id": "q02", "gold_chunk_ids": ["chunk_xyz"]}
+{"question_id": "q03", "gold_chunk_ids": ["chunk_111", "chunk_222"]}

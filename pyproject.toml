@@ -19,6 +19,7 @@ dependencies = [
     "polars>=1.0",
     "pyarrow>=14.0",
     "pyyaml>=6.0",
+    "qdrant-client>=1.7.1",
 ]
 
 [project.scripts]
@@ -41,6 +42,8 @@ dev = [
     "respx>=0.20",
     "mutmut>=2.0",
     "types-pyyaml>=6.0",
+    "testcontainers[qdrant]>=4.3",
+    "pytest-asyncio>=0.23",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -85,7 +88,7 @@ mypy_path = ["src"]
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["pandas.*", "pyarrow.*"]
+module = ["pandas.*", "pyarrow.*", "qdrant_client.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
@@ -94,6 +97,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"
+asyncio_mode = "auto"
 markers = [
     "unit: Unit tests — fast, no I/O",
     "integration: Integration tests — real adapters, containers",
