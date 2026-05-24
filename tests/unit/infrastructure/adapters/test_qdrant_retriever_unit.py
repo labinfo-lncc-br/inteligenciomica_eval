@@ -190,6 +190,24 @@ def test_search_raises_retrieval_error_on_qdrant_exception(
 
 
 # ---------------------------------------------------------------------------
+# Public default_top_k attribute (used by callers who want the configured default)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_default_top_k_is_public_and_matches_constructor(
+    mock_qdrant_client: MagicMock,
+) -> None:
+    _ = mock_qdrant_client
+    adapter = QdrantRetrieverAdapter(
+        url="http://localhost:6333",
+        collection_map={},
+        top_k=12,
+    )
+    assert adapter.default_top_k == 12
+
+
+# ---------------------------------------------------------------------------
 # isinstance check — RetrieverPort structural conformance
 # ---------------------------------------------------------------------------
 

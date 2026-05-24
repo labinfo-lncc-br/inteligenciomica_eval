@@ -47,7 +47,7 @@ class QdrantRetrieverAdapter:
     ) -> None:
         self._client: AsyncQdrantClient = AsyncQdrantClient(url=url)
         self._collection_map: dict[str, str] = dict(collection_map)
-        self._default_top_k: int = top_k
+        self.default_top_k: int = top_k
         self._embedding_model: str = embedding_model
 
     # ------------------------------------------------------------------

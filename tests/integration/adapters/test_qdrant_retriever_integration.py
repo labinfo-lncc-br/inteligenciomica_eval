@@ -21,7 +21,6 @@ import random
 import pytest
 
 from inteligenciomica_eval.domain.errors import RetrievalError, StorageError
-from inteligenciomica_eval.domain.ports import Chunk, RetrievalResult
 from inteligenciomica_eval.domain.value_objects import BaseId
 from inteligenciomica_eval.infrastructure.adapters.qdrant_retriever import (
     GoldChunkReaderAdapter,
@@ -141,63 +140,45 @@ def populated_collection(qdrant_url: str) -> None:  # type: ignore[return]
 
 
 # ---------------------------------------------------------------------------
-# Helper that replaces _search_async with a dense-vector version
+# Helper: redirect only query_points to dense vector search
 # ---------------------------------------------------------------------------
 
 
-def _patch_for_dense_search(
+def _patch_query_points_with_dense_search(
     adapter: QdrantRetrieverAdapter, query_vec: list[float]
 ) -> None:
-    """Monkeypatch adapter._search_async to use dense search instead of Document query."""
-    import time
+    """Redirect client.query_points() to use a dense float vector instead of Document.
 
-    import structlog
-    from qdrant_client.http.models import ScoredPoint
+    ``_search_async`` is left **unchanged**: collection-mapping, error wrapping,
+    structured logging, and ScoredPoint→RetrievalResult conversion are all fully
+    exercised.  Only the Qdrant query input is swapped from ``Document(text=…)``
+    to a pre-computed float list, bypassing the Inference API that is not
+    available on a vanilla Qdrant container.
 
-    log = structlog.get_logger(__name__)
+    Note: qdrant-client ≥ 1.7 removed the standalone ``search()`` method;
+    ``query_points(query=list[float])`` is the correct API for dense search.
+    """
+    from typing import Any
 
-    async def _dense_search(
-        *,
-        base: BaseId,
-        question: str,
-        top_k: int,
-    ) -> RetrievalResult:
-        _ = question  # unused — dense search ignores query text
-        collection_name = adapter._collection_map.get(base.value)
-        if collection_name is None:
-            raise RetrievalError(f"No collection mapped for base {base.value!r}")
+    from qdrant_client.http.models import QueryResponse
 
-        t0 = time.monotonic()
-        raw_points: list[ScoredPoint] = await adapter._client.search(
+    original_qp = adapter._client.query_points
+
+    async def _dense_query_points(
+        collection_name: str,
+        query: Any,
+        limit: int = 10,
+        **kwargs: Any,
+    ) -> QueryResponse:
+        _ = query  # ignore Document — use pre-computed dense vector instead
+        return await original_qp(
             collection_name=collection_name,
-            query_vector=query_vec,
-            limit=top_k,
-            with_payload=True,
-        )
-        latency_ms = int((time.monotonic() - t0) * 1000)
-        log.info(
-            "qdrant_search_completed",
-            base=base.value,
-            collection=collection_name,
-            top_k=top_k,
-            num_results=len(raw_points),
-            latency_ms=latency_ms,
-        )
-        chunks = tuple(
-            Chunk(
-                id=str(p.id),
-                text=str((p.payload or {}).get("text", "")),
-                score=p.score,
-            )
-            for p in raw_points
-        )
-        return RetrievalResult(
-            chunks=chunks,
-            ids=tuple(c.id for c in chunks),
-            scores=tuple(c.score for c in chunks),
+            query=query_vec,  # list[float] → dense vector search
+            limit=limit,
+            **kwargs,
         )
 
-    adapter._search_async = _dense_search  # type: ignore[method-assign]
+    adapter._client.query_points = _dense_query_points  # type: ignore[method-assign]
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +198,7 @@ def test_search_returns_top_k_chunks(
         collection_map={_BASE_ID: _COLLECTION},
         top_k=8,
     )
-    _patch_for_dense_search(adapter, _rand_vec())
+    _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     result = adapter.search(base=BaseId(_BASE_ID), question="DNA replication", top_k=3)
 
@@ -237,7 +218,7 @@ def test_search_scores_are_floats_in_unit_interval(
         url=qdrant_url,
         collection_map={_BASE_ID: _COLLECTION},
     )
-    _patch_for_dense_search(adapter, _rand_vec())
+    _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     result = adapter.search(base=BaseId(_BASE_ID), question="test", top_k=_NUM_DOCS)
 
@@ -257,7 +238,7 @@ def test_search_scores_are_descending(
         url=qdrant_url,
         collection_map={_BASE_ID: _COLLECTION},
     )
-    _patch_for_dense_search(adapter, _rand_vec())
+    _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     result = adapter.search(base=BaseId(_BASE_ID), question="test", top_k=_NUM_DOCS)
 
@@ -278,7 +259,7 @@ def test_search_top_k_limits_results_correctly(
         url=qdrant_url,
         collection_map={_BASE_ID: _COLLECTION},
     )
-    _patch_for_dense_search(adapter, _rand_vec())
+    _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     for k in (1, 2, 5):
         result = adapter.search(base=BaseId(_BASE_ID), question="q", top_k=k)
@@ -296,7 +277,7 @@ def test_search_payload_text_is_accessible(
         url=qdrant_url,
         collection_map={_BASE_ID: _COLLECTION},
     )
-    _patch_for_dense_search(adapter, _rand_vec())
+    _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     result = adapter.search(base=BaseId(_BASE_ID), question="test", top_k=3)
 
@@ -315,7 +296,7 @@ def test_search_raises_retrieval_error_for_unmapped_base(
         url=qdrant_url,
         collection_map={_BASE_ID: _COLLECTION},
     )
-    _patch_for_dense_search(adapter, _rand_vec())
+    _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     with pytest.raises(RetrievalError, match="No collection mapped"):
         adapter.search(base=BaseId("ID_230K"), question="test", top_k=3)
