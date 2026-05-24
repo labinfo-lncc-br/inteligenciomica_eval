@@ -1,0 +1,49 @@
+{
+  "run_id": "e2e-min-round-stub",
+  "round_id": "round_1",
+  "phase": "A",
+  "failure_threshold": 0.6,
+  "nan_cell": ["IDx_400k", "llm-beta", 42, "q02"],
+  "total_cells": 4,
+  "normal_final_score": 0.8165,
+  "normal_metrics": {
+    "answer_correctness": 0.80,
+    "answer_similarity": 0.75,
+    "faithfulness": 0.90,
+    "context_precision": 0.85,
+    "context_recall": 0.70,
+    "answer_relevancy": 0.88,
+    "bertscore_f1": 0.82,
+    "rubric_biomed_score": 0.80
+  },
+  "configs": [
+    {
+      "base": "IDx_400k",
+      "llm": "llm-alpha",
+      "mean_score": 0.8165,
+      "median_score": 0.8165,
+      "min_score": 0.8165,
+      "iqr": 0.0,
+      "failure_rate": 0.0,
+      "critical_failure_rate": 0.0,
+      "win_rate": 0.75,
+      "rank_score": 0.72075,
+      "n_observations": 2,
+      "n_excluded_nan": 0
+    },
+    {
+      "base": "IDx_400k",
+      "llm": "llm-beta",
+      "mean_score": 0.8165,
+      "median_score": 0.8165,
+      "min_score": 0.8165,
+      "iqr": null,
+      "failure_rate": 0.0,
+      "critical_failure_rate": 0.0,
+      "win_rate": 0.25,
+      "rank_score": 0.64575,
+      "n_observations": 1,
+      "n_excluded_nan": 1
+    }
+  ]
+}
