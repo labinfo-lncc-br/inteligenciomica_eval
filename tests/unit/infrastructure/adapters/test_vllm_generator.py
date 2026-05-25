@@ -1,8 +1,7 @@
 """Unit tests for VLLMGeneratorAdapter (TAREFA-014).
 
 Uses respx.mock to intercept httpx calls to the OpenAI-compatible vLLM endpoint.
-All tests target _generate_async directly (async), avoiding asyncio.run() from
-within a running event loop.
+All tests call the public async generate() method directly.
 """
 
 from __future__ import annotations
@@ -81,7 +80,7 @@ async def test_generate_returns_text_from_fixture(
     )
     adapter = _make_adapter(respx_mock)
 
-    result = await adapter._generate_async(
+    result = await adapter.generate(
         llm=_LLM,
         question="What is DNA replication?",
         contexts=[_CHUNK],
@@ -106,7 +105,7 @@ async def test_generate_seed_appears_in_request_body(
     )
     adapter = _make_adapter(respx_mock)
 
-    await adapter._generate_async(
+    await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=99, temperature=0.1
     )
 
@@ -125,7 +124,7 @@ async def test_generate_batch_invariant_always_false(
     )
     adapter = _make_adapter(respx_mock)
 
-    result = await adapter._generate_async(
+    result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
     )
 
@@ -143,7 +142,7 @@ async def test_generate_returns_generation_output_type(
     )
     adapter = _make_adapter(respx_mock)
 
-    result = await adapter._generate_async(
+    result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=1, temperature=0.1
     )
 
@@ -161,7 +160,7 @@ async def test_generate_token_counts_from_fixture(
     )
     adapter = _make_adapter(respx_mock)
 
-    result = await adapter._generate_async(
+    result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
     )
 
@@ -180,7 +179,7 @@ async def test_generate_latency_ms_is_non_negative(
     )
     adapter = _make_adapter(respx_mock)
 
-    result = await adapter._generate_async(
+    result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=5, temperature=0.1
     )
 
@@ -198,7 +197,7 @@ async def test_generate_temperature_in_request_body(
     )
     adapter = _make_adapter(respx_mock)
 
-    await adapter._generate_async(
+    await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.25
     )
 
@@ -248,7 +247,7 @@ async def test_custom_prompt_fn_is_used(
         _retry_wait=wait_none(),
     )
 
-    await adapter._generate_async(
+    await adapter.generate(
         llm=_LLM, question="my question", contexts=[_CHUNK], seed=0, temperature=0.1
     )
 
@@ -278,7 +277,7 @@ async def test_non_retryable_error_raises_generation_error(
     adapter = _make_adapter(respx_mock)
 
     with pytest.raises(GenerationError):
-        await adapter._generate_async(
+        await adapter.generate(
             llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
         )
 
@@ -298,7 +297,7 @@ async def test_non_retryable_error_not_retried(
     adapter = _make_adapter(respx_mock)
 
     with pytest.raises(GenerationError):
-        await adapter._generate_async(
+        await adapter.generate(
             llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
         )
 
@@ -322,7 +321,7 @@ async def test_retries_three_times_on_connection_error(
     adapter = _make_adapter(respx_mock)
 
     with pytest.raises(GenerationError):
-        await adapter._generate_async(
+        await adapter.generate(
             llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
         )
 
@@ -348,7 +347,7 @@ async def test_succeeds_after_transient_connection_error(
     respx_mock.post(_ENDPOINT).mock(side_effect=_side_effect)
     adapter = _make_adapter(respx_mock)
 
-    result = await adapter._generate_async(
+    result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=42, temperature=0.1
     )
 

@@ -128,7 +128,7 @@ class _StubRetriever:
 
 
 class _StubGenerator:
-    def generate(
+    async def generate(
         self,
         *,
         llm: LLMId,
@@ -425,9 +425,9 @@ class TestStubBehavior:
         assert isinstance(result, RetrievalResult)
         assert len(result.chunks) == 1
 
-    def test_stub_generator_returns_generation_output(self) -> None:
+    async def test_stub_generator_returns_generation_output(self) -> None:
         chunk = Chunk(id="c1", text="ctx", score=0.9)
-        output = _StubGenerator().generate(
+        output = await _StubGenerator().generate(
             llm=LLMId("llama3"),
             question="O que é RAG?",
             contexts=[chunk],

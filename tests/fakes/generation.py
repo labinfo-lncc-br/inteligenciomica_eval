@@ -56,7 +56,7 @@ class FakeGenerator:
         self._latency_ms = latency_ms
         self.calls: list[GenerateCall] = []
 
-    def generate(
+    async def generate(
         self,
         *,
         llm: LLMId,

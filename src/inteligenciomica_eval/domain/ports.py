@@ -294,7 +294,7 @@ class GeneratorPort(Protocol):
     Implementações concretas ficam em ``infrastructure/adapters/``.
     """
 
-    def generate(
+    async def generate(
         self,
         *,
         llm: LLMId,

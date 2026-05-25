@@ -76,7 +76,7 @@ _PARTIAL_METRICS = MetricVector(
 )
 
 
-def run_min_round(
+async def run_min_round(
     *,
     storage: ParquetStorage,
     run_id: str,
@@ -180,7 +180,7 @@ def run_min_round(
                         question=question.text,
                         top_k=3,
                     )
-                    generation = generator.generate(
+                    generation = await generator.generate(
                         llm=llm_id,
                         question=question.text,
                         contexts=retrieval.chunks,

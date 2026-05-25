@@ -162,7 +162,7 @@ def aux_metric() -> FakeDeterministicMetric:
 # ---------------------------------------------------------------------------
 
 
-def _run(
+async def _run(
     storage: ParquetStorage,
     retriever: StubRetriever,
     generator: FakeGenerator,
@@ -173,7 +173,7 @@ def _run(
     aux_metric: FakeDeterministicMetric,
 ) -> tuple[list, tuple]:  # type: ignore[type-arg]
     """Helper: call run_min_round with the shared scenario config."""
-    return run_min_round(
+    return await run_min_round(
         storage=storage,
         run_id=_RUN_ID,
         round_id=_ROUND_ID,
@@ -200,7 +200,7 @@ def _run(
 
 
 @pytest.mark.e2e
-def test_parquet_row_count(
+async def test_parquet_row_count(
     storage: ParquetStorage,
     retriever: StubRetriever,
     generator: FakeGenerator,
@@ -211,7 +211,7 @@ def test_parquet_row_count(
     aux_metric: FakeDeterministicMetric,
 ) -> None:
     """Parquet must hold exactly as many rows as planned cells."""
-    results, _ = _run(
+    results, _ = await _run(
         storage,
         retriever,
         generator,
@@ -237,7 +237,7 @@ def test_parquet_row_count(
 
 
 @pytest.mark.e2e
-def test_parquet_roundtrip(
+async def test_parquet_roundtrip(
     storage: ParquetStorage,
     retriever: StubRetriever,
     generator: FakeGenerator,
@@ -248,7 +248,7 @@ def test_parquet_roundtrip(
     aux_metric: FakeDeterministicMetric,
 ) -> None:
     """Reloading Parquet must reconstruct EvaluationResults faithfully (§5.3)."""
-    results, _ = _run(
+    results, _ = await _run(
         storage,
         retriever,
         generator,
@@ -299,7 +299,7 @@ def test_parquet_roundtrip(
 
 
 @pytest.mark.e2e
-def test_normal_cells_have_expected_final_score(
+async def test_normal_cells_have_expected_final_score(
     storage: ParquetStorage,
     retriever: StubRetriever,
     generator: FakeGenerator,
@@ -310,7 +310,7 @@ def test_normal_cells_have_expected_final_score(
     aux_metric: FakeDeterministicMetric,
 ) -> None:
     """Normal cells must produce final_score == golden value (hand-calculated)."""
-    results, _ = _run(
+    results, _ = await _run(
         storage,
         retriever,
         generator,
@@ -345,7 +345,7 @@ def test_normal_cells_have_expected_final_score(
 
 
 @pytest.mark.e2e
-def test_nan_cell_excluded_from_aggregation_and_counted(
+async def test_nan_cell_excluded_from_aggregation_and_counted(
     storage: ParquetStorage,
     retriever: StubRetriever,
     generator: FakeGenerator,
@@ -356,7 +356,7 @@ def test_nan_cell_excluded_from_aggregation_and_counted(
     aux_metric: FakeDeterministicMetric,
 ) -> None:
     """The NaN cell must be excluded from numeric aggregates and counted (ADR-007)."""
-    _, aggregates = _run(
+    _, aggregates = await _run(
         storage,
         retriever,
         generator,
@@ -394,7 +394,7 @@ def test_nan_cell_excluded_from_aggregation_and_counted(
 
 
 @pytest.mark.e2e
-def test_idempotency_second_run_does_not_duplicate_rows(
+async def test_idempotency_second_run_does_not_duplicate_rows(
     storage: ParquetStorage,
     retriever: StubRetriever,
     normal_metric_suite: FakeMetricSuite,
@@ -408,7 +408,7 @@ def test_idempotency_second_run_does_not_duplicate_rows(
     gen2 = FakeGenerator()
 
     # First run: writes all cells
-    _results1, _ = run_min_round(
+    _results1, _ = await run_min_round(
         storage=storage,
         run_id=_RUN_ID,
         round_id=_ROUND_ID,
@@ -429,7 +429,7 @@ def test_idempotency_second_run_does_not_duplicate_rows(
     )
 
     # Second run: same storage + same run_id → all rows already exist
-    results2, _ = run_min_round(
+    results2, _ = await run_min_round(
         storage=storage,
         run_id=_RUN_ID,
         round_id=_ROUND_ID,
@@ -474,7 +474,7 @@ def test_idempotency_second_run_does_not_duplicate_rows(
 
 
 @pytest.mark.e2e
-def test_aggregate_golden_values(
+async def test_aggregate_golden_values(
     storage: ParquetStorage,
     retriever: StubRetriever,
     generator: FakeGenerator,
@@ -485,7 +485,7 @@ def test_aggregate_golden_values(
     aux_metric: FakeDeterministicMetric,
 ) -> None:
     """Aggregated ConfigAggregates must match golden hand-calculated values."""
-    _, aggregates = _run(
+    _, aggregates = await _run(
         storage,
         retriever,
         generator,
@@ -544,7 +544,7 @@ def test_aggregate_golden_values(
 
 
 @pytest.mark.e2e
-def test_no_real_ports_used(
+async def test_no_real_ports_used(
     storage: ParquetStorage,
     retriever: StubRetriever,
     generator: FakeGenerator,
@@ -564,7 +564,7 @@ def test_no_real_ports_used(
     assert isinstance(aux_metric, FakeDeterministicMetric)
 
     # Run confirms no exception (would fail if real I/O were attempted)
-    _run(
+    await _run(
         storage,
         retriever,
         generator,

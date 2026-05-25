@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -90,7 +89,7 @@ class VLLMGeneratorAdapter:
     # GeneratorPort interface
     # ------------------------------------------------------------------
 
-    def generate(
+    async def generate(
         self,
         *,
         llm: LLMId,
@@ -100,10 +99,6 @@ class VLLMGeneratorAdapter:
         temperature: float,
     ) -> GenerationOutput:
         """Generate a response for *question* given *contexts*.
-
-        Synchronous wrapper around the async implementation.  Must NOT be
-        called from within a running event loop; use ``_generate_async``
-        directly from async contexts.
 
         Args:
             llm: model identifier used for logging.
@@ -118,52 +113,6 @@ class VLLMGeneratorAdapter:
 
         Raises:
             GenerationError: on any generation failure (including retries exhausted).
-        """
-        return asyncio.run(
-            self._generate_async(
-                llm=llm,
-                question=question,
-                contexts=contexts,
-                seed=seed,
-                temperature=temperature,
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    async def close(self) -> None:
-        """Close the underlying httpx transport held by ``AsyncOpenAI``."""
-        await self._client.close()
-
-    # ------------------------------------------------------------------
-    # Internal async implementation
-    # ------------------------------------------------------------------
-
-    async def _generate_async(
-        self,
-        *,
-        llm: LLMId,
-        question: str,
-        contexts: Sequence[Chunk],
-        seed: int,
-        temperature: float,
-    ) -> GenerationOutput:
-        """Async implementation: calls vLLM with tenacity retry on transient errors.
-
-        Args:
-            llm: model identifier used for logging.
-            question: question text.
-            contexts: sequence of retrieved chunks.
-            seed: reproducibility seed passed in ``extra_body`` (§9.3, ADR-003).
-            temperature: sampling temperature.
-
-        Returns:
-            :class:`~inteligenciomica_eval.domain.ports.GenerationOutput`.
-
-        Raises:
-            GenerationError: on non-retryable API errors or retries exhausted.
         """
         prompt = self._prompt_fn(question, contexts)
         t0 = time.monotonic()
@@ -211,3 +160,11 @@ class VLLMGeneratorAdapter:
         )
 
         return output
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Close the underlying httpx transport held by ``AsyncOpenAI``."""
+        await self._client.close()

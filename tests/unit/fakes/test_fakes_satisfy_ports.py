@@ -160,34 +160,34 @@ class TestStubRetriever:
 
 
 class TestFakeGenerator:
-    def test_deterministic_same_inputs_same_output(self) -> None:
+    async def test_deterministic_same_inputs_same_output(self) -> None:
         gen = FakeGenerator()
         chunk = Chunk(id="c1", text="ctx", score=0.9)
         llm = LLMId("model-a")
-        out1 = gen.generate(
+        out1 = await gen.generate(
             llm=llm, question="Q?", contexts=[chunk], seed=1, temperature=0.0
         )
-        out2 = gen.generate(
+        out2 = await gen.generate(
             llm=llm, question="Q?", contexts=[chunk], seed=1, temperature=0.0
         )
         assert out1.text == out2.text
 
-    def test_different_seed_different_output(self) -> None:
+    async def test_different_seed_different_output(self) -> None:
         gen = FakeGenerator()
         chunk = Chunk(id="c1", text="ctx", score=0.9)
         llm = LLMId("model-a")
-        out1 = gen.generate(
+        out1 = await gen.generate(
             llm=llm, question="Q?", contexts=[chunk], seed=1, temperature=0.0
         )
-        out2 = gen.generate(
+        out2 = await gen.generate(
             llm=llm, question="Q?", contexts=[chunk], seed=2, temperature=0.0
         )
         assert out1.text != out2.text
 
-    def test_records_calls(self) -> None:
+    async def test_records_calls(self) -> None:
         gen = FakeGenerator()
         chunk = Chunk(id="c1", text="ctx", score=0.9)
-        gen.generate(
+        await gen.generate(
             llm=LLMId("model-x"),
             question="Q?",
             contexts=[chunk],
@@ -198,11 +198,11 @@ class TestFakeGenerator:
         assert gen.calls[0].question == "Q?"
         assert gen.calls[0].seed == 0
 
-    def test_call_count_matches_invocations(self) -> None:
+    async def test_call_count_matches_invocations(self) -> None:
         gen = FakeGenerator()
         chunk = Chunk(id="c1", text="ctx", score=0.9)
         for i in range(3):
-            gen.generate(
+            await gen.generate(
                 llm=LLMId("m"),
                 question=f"Q{i}",
                 contexts=[chunk],
