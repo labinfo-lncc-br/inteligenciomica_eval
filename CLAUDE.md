@@ -14,9 +14,29 @@ decisões de arquitetura e convenções que devem ser respeitadas em **todas** a
 | Lint + format   | **ruff** (lint e format unificados)                        |
 | Type checker    | **mypy --strict** (apenas em `src/`, não em `tests/`)      |
 | Contratos arq.  | **import-linter** (`.importlinter` com 4 contratos)        |
-| Testes          | **pytest** + **pytest-cov** + **pytest-xdist**             |
+| Testes          | **pytest** + **pytest-cov** + **pytest-xdist** + **pytest-asyncio** |
+| Async tests     | `asyncio_mode = "auto"` no `pyproject.toml` — `async def` basta |
+| HTTP mock       | **respx** — patcha httpcore globalmente via `respx_mock` fixture |
 | Pre-commit      | ruff-lint · ruff-format · mypy (via hook `local`)          |
 | Python          | **3.11+** (runtime); ambiente local usa 3.12               |
+
+### Dependências de runtime relevantes
+
+| Pacote | Versão mínima | Uso |
+|--------|--------------|-----|
+| `qdrant-client` | `>=1.7.1` | `AsyncQdrantClient` no `QdrantRetrieverAdapter` |
+| `openai` | `>=1.0` | `AsyncOpenAI` no `VLLMGeneratorAdapter` |
+| `tenacity` | `>=8.0` | Retry com `AsyncRetrying` nos adapters de rede |
+| `structlog` | `>=24.0` | Logging estruturado em toda a infraestrutura |
+| `pydantic` | `>=2.0` | Validação de configuração YAML (apenas infra) |
+
+### Dev deps adicionais (M1)
+
+| Pacote | Uso |
+|--------|-----|
+| `testcontainers[qdrant]>=4.3` | Testes de integração do `QdrantRetrieverAdapter` |
+| `pytest-asyncio>=0.23` | Suporte a `async def` em testes |
+| `respx>=0.20` | Mock de chamadas HTTP do `openai.AsyncOpenAI` |
 
 ### Ordem obrigatória de validação (antes de qualquer commit)
 
@@ -37,23 +57,36 @@ src/inteligenciomica_eval/   ← pacote principal (src layout)
   __init__.py                ← expõe __version__
   cli.py                     ← Typer app (entry point: ielm-eval)
   domain/                    ← regras puras, sem I/O
+    errors.py                ← hierarquia de exceções de domínio
+    entities.py              ← EvaluationResult, GeneratedAnswer, Question
+    value_objects.py         ← LLMId, BaseId, Seed, MetricVector, FinalScore, ...
+    ports.py                 ← Protocols @runtime_checkable (GeneratorPort async)
     services/
-  application/               ← use cases orquestrando domain
+      final_score.py         ← FinalScoreCalculator (pesos configuráveis)
+      rank_score.py          ← RankScoreCalculator
+      aggregation.py         ← AggregationService (ConfigAggregate)
+  application/               ← use cases orquestrando domain (vazio em M0/M1)
   infrastructure/            ← adapters, repos, config, prompts
     adapters/
+      qdrant_retriever.py    ← QdrantRetrieverAdapter + GoldChunkReaderAdapter ✅ M1
+      vllm_generator.py      ← VLLMGeneratorAdapter ✅ M1
     config/
-    prompts/
+      schema.py              ← RoundConfig Pydantic (YAML de rodada)
+      settings.py            ← AppSettings (pydantic-settings)
+      provenance.py          ← ProvenanceInfo (hashes, versões)
+    prompts/                 ← templates Jinja2 (a preencher em TAREFA-015)
     repositories/
-  visualization/             ← helpers de renderização
+      parquet_storage.py     ← ParquetStorage (ResultWriterPort + ResultReaderPort)
+  visualization/             ← helpers de renderização (vazio)
 
 tests/
   conftest.py
   unit/                      ← ≥ 70% dos testes, < 10 ms cada
     domain/                  ← espelha src/domain/
-    application/             ← espelha src/application/
+    infrastructure/adapters/ ← testes unitários dos adapters (respx.mock)
   integration/               ← adapters reais, containers
-    adapters/                ← espelha src/infrastructure/adapters/
-  e2e/                       ← fluxos fim-a-fim
+    adapters/                ← QdrantRetrieverAdapter com testcontainers
+  e2e/                       ← fluxos fim-a-fim (harness async desde TAREFA-014)
   fakes/                     ← implementações in-memory das ports
   factories/                 ← builders de dados de teste
   golden/                    ← datasets de referência (ML/RAG)
@@ -61,6 +94,9 @@ tests/
 docs/
   adr/                       ← Architecture Decision Records
   dev-log/                   ← relatórios de execução por tarefa
+  prompts_m0_tarefas_001_006.md
+  prompts_m0_tarefas_007_012.md
+  prompts_m1_tarefas_013_021.md ← Nota de operacionalização M1 + prompts A/B
 ```
 
 ---
@@ -171,8 +207,8 @@ M{N}_TAREFA-{NNN}_{parte}_{slug}.md
 ```
 M0_TAREFA-001_A_bootstrap-repositorio.md
 M0_TAREFA-002_A_dominio-core.md
-M1_TAREFA-010_A_adapter-llm.md
-M1_TAREFA-010_B_revisao-testes.md
+M1_TAREFA-013_A_qdrant-gold-chunk-adapters.md
+M1_TAREFA-014_D_async-first-fix.md
 ```
 
 ### Estrutura interna do relatório
@@ -209,10 +245,129 @@ uv run pre-commit run --all-files  # roda hooks em todos os arquivos
 
 ---
 
-## 9. CI
+## 10. CI
 
 Arquivo: `.github/workflows/ci.yml`
 
 Passos em ordem: checkout → setup-uv → setup-python 3.11 → `uv sync --frozen` →
 `ruff check` → `ruff format --check` → `mypy --strict src` → `lint-imports` →
 `pytest --cov=src --cov-report=xml --cov-fail-under=85 -n auto`
+
+---
+
+## 11. Async-First — Política de Adapters de Rede (Nota M1 item 1)
+
+> **Regra**: todos os adapters que realizam chamadas de rede usam `async/await` como
+> interface pública. Adapters síncronos por natureza (BERTScore, ROUGE-L,
+> `AnnotationReaderAdapter`) permanecem síncronos.
+
+### Estado atual dos ports
+
+| Port | Assinatura pública | Adapter | Observação |
+|------|--------------------|---------|------------|
+| `GeneratorPort.generate()` | `async def` ✅ | `VLLMGeneratorAdapter` | Async-first desde TAREFA-014-D |
+| `RetrieverPort.search()` | `def` (síncrono) ⚠️ | `QdrantRetrieverAdapter` | Usa `asyncio.run()` internamente; migrar para `async def` quando o application layer adotar async |
+
+A tensão do `RetrieverPort` está documentada em `docs/dev-log/M1_TAREFA-013_A_qdrant-gold-chunk-adapters.md` (Decisão Técnica §1) e na observação 4 do mesmo relatório.
+
+### Padrão para testes de adapters HTTP
+
+```python
+# respx patcha httpcore globalmente via router.start()
+# NÃO usar httpx.AsyncClient(transport=respx_mock) — MockRouter não implementa AsyncTransport
+def _make_adapter(respx_mock: respx.MockRouter) -> VLLMGeneratorAdapter:
+    _ = respx_mock          # garante que o fixture está ativo (httpcore patchado)
+    http_client = httpx.AsyncClient()   # cliente plain — usa httpcore patchado
+    return VLLMGeneratorAdapter(url=..., model=..., http_client=http_client, ...)
+```
+
+### Padrão de retry com tenacity (adapters de rede)
+
+```python
+_RETRYABLE = (openai.APIConnectionError, openai.RateLimitError)  # erros transitórios
+
+async for attempt in AsyncRetrying(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception_type(_RETRYABLE),
+    reraise=True,
+):
+    with attempt:
+        response = await client.chat.completions.create(...)
+```
+
+Setar `max_retries=0` no `AsyncOpenAI` — o SDK v2 tem retry próprio (default 2 tentativas);
+sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
+
+---
+
+## 12. Estado Atual do Desenvolvimento
+
+### M0 — Fundação do Domínio ✅ CONCLUÍDO (TAREFA-001 a 012)
+
+| Tarefa | Descrição | Status |
+|--------|-----------|--------|
+| 001 | Bootstrap do repositório (uv, ruff, mypy, import-linter, CI) | ✅ |
+| 002 | Hierarquia de exceções de domínio | ✅ |
+| 003 | Value objects de domínio (LLMId, BaseId, Seed, MetricVector, FinalScore, …) | ✅ |
+| 004 | Entidades de domínio (Question, GeneratedAnswer, EvaluationResult) | ✅ |
+| 005 | Ports/Protocols @runtime_checkable (GeneratorPort, RetrieverPort, …) | ✅ |
+| 006 | FinalScoreCalculator (pesos configuráveis, NaN propagation ADR-007) | ✅ |
+| 007 | RankScoreCalculator | ✅ |
+| 008 | AggregationService (ConfigAggregate, NaN exclusion) | ✅ |
+| 009 | ParquetStorage (ResultWriterPort + ResultReaderPort, two-pass §3.4) | ✅ |
+| 010 | Config YAML (RoundConfig Pydantic, AppSettings, ProvenanceInfo, dry-run) | ✅ |
+| 011 | Fakes e factories de teste (FakeGenerator, FakeMetricSuite, StubRetriever, …) | ✅ |
+| 012 | E2E stub — round mínimo em CPU (harness §3.4 duas passadas, golden values) | ✅ |
+
+### M1 — Adapters de Infraestrutura (TAREFA-013 a 021)
+
+| Tarefa | Descrição | Status |
+|--------|-----------|--------|
+| 013 | `QdrantRetrieverAdapter` + `GoldChunkReaderAdapter` | ✅ |
+| 014 | `VLLMGeneratorAdapter` (async-first, openai SDK, tenacity, respx) | ✅ |
+| 015 | `PromptRegistry` (templates Jinja2 versionados, `PackageLoader`) | 🔲 próxima |
+| 016 | `PrometheusJudgeAdapter` (rubrica biomédica, NaN-or-retry ADR-007) | 🔲 |
+| 017 | `RAGASLayer1Adapter` (RAGAS apontando para vllm-judge determinístico) | 🔲 |
+| 018 | `DeterministicMetricsAdapter` (BERTScore + ROUGE-L, síncrono) | 🔲 |
+| 019 | `VLLMServerManagerAdapter` (subprocess local, polling /health) | 🔲 |
+| 020 | `AnnotationReaderAdapter` (JSONL de anotações críticas) | 🔲 |
+| 021 | Gate de integração M1 (pipeline adapter end-to-end) | 🔲 |
+
+### Cobertura atual
+
+```
+579 passed, 7 skipped — 96.39% total coverage
+vllm_generator.py: 98% | qdrant_retriever.py: 95%
+```
+
+---
+
+## 13. Decisões de Design Relevantes para M1
+
+### VLLMGeneratorAdapter
+
+- `url` deve incluir `/v1` (ex: `"http://localhost:8000/v1"`) — `AsyncOpenAI(base_url=url)` anexa `/chat/completions` sem reintroduzir `/v1`.
+- `seed` vai em `extra_body={"seed": seed}` (não em campo padrão da API) — comportamento vLLM-specific (§9.3, ADR-003).
+- `batch_invariant=False` sempre — constante neste adapter (§9.2.4).
+- `_retry_stop` e `_retry_wait` são injetáveis para testes (parâmetro `_` prefixo).
+
+### QdrantRetrieverAdapter
+
+- Embedding feito **pelo servidor Qdrant** (Inference API) — o adapter não carrega modelo local.
+- `collection_map: Mapping[str, str]` mapeia `BaseId.value → nome da coleção Qdrant`.
+- Testes de integração usam `testcontainers[qdrant]` (Docker); marcados com `@_skip_no_docker` pois WSL2 local não tem Docker disponível.
+- Imagem testcontainers (`qdrant/qdrant:v1.9`) não inclui FastEmbed — testes de integração fazem monkeypatch de `_search_async` para usar vetores densos diretos.
+
+### GoldChunkReaderAdapter
+
+- Arquivo JSONL em `tests/fixtures/gold_chunks.jsonl` — uma linha por question_id.
+- Carregamento lazy + cache interno (`_ensure_loaded()`).
+- Levanta `StorageError` em arquivo ausente ou question_id não encontrado.
+
+### PromptRegistry (TAREFA-015 — a implementar)
+
+- Templates em `src/inteligenciomica_eval/infrastructure/prompts/*.j2`.
+- `jinja2.Environment(loader=PackageLoader(...))`.
+- `prompt_version` = `git describe --tags --dirty` capturado na inicialização.
+- `VLLMGeneratorAdapter` já aceita `prompt_fn: Callable[[str, Sequence[Chunk]], str]` para injeção — substituir `_default_prompt_fn` inline pelo `PromptRegistry`.
