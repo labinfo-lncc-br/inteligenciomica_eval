@@ -191,7 +191,7 @@ def _patch_query_points_with_dense_search(
 
 @_skip_no_docker
 @pytest.mark.integration
-def test_search_returns_top_k_chunks(
+async def test_search_returns_top_k_chunks(
     qdrant_url: str,
     populated_collection: None,
 ) -> None:
@@ -203,7 +203,9 @@ def test_search_returns_top_k_chunks(
     )
     _patch_query_points_with_dense_search(adapter, _rand_vec())
 
-    result = adapter.search(base=BaseId(_BASE_ID), question="DNA replication", top_k=3)
+    result = await adapter.search(
+        base=BaseId(_BASE_ID), question="DNA replication", top_k=3
+    )
 
     assert len(result.chunks) == 3
     assert len(result.ids) == 3
@@ -212,7 +214,7 @@ def test_search_returns_top_k_chunks(
 
 @_skip_no_docker
 @pytest.mark.integration
-def test_search_scores_are_floats_in_unit_interval(
+async def test_search_scores_are_floats_in_unit_interval(
     qdrant_url: str,
     populated_collection: None,
 ) -> None:
@@ -223,7 +225,9 @@ def test_search_scores_are_floats_in_unit_interval(
     )
     _patch_query_points_with_dense_search(adapter, _rand_vec())
 
-    result = adapter.search(base=BaseId(_BASE_ID), question="test", top_k=_NUM_DOCS)
+    result = await adapter.search(
+        base=BaseId(_BASE_ID), question="test", top_k=_NUM_DOCS
+    )
 
     for score in result.scores:
         assert isinstance(score, float), f"score should be float, got {type(score)}"
@@ -232,7 +236,7 @@ def test_search_scores_are_floats_in_unit_interval(
 
 @_skip_no_docker
 @pytest.mark.integration
-def test_search_scores_are_descending(
+async def test_search_scores_are_descending(
     qdrant_url: str,
     populated_collection: None,
 ) -> None:
@@ -243,7 +247,9 @@ def test_search_scores_are_descending(
     )
     _patch_query_points_with_dense_search(adapter, _rand_vec())
 
-    result = adapter.search(base=BaseId(_BASE_ID), question="test", top_k=_NUM_DOCS)
+    result = await adapter.search(
+        base=BaseId(_BASE_ID), question="test", top_k=_NUM_DOCS
+    )
 
     scores = list(result.scores)
     assert scores == sorted(scores, reverse=True), (
@@ -253,7 +259,7 @@ def test_search_scores_are_descending(
 
 @_skip_no_docker
 @pytest.mark.integration
-def test_search_top_k_limits_results_correctly(
+async def test_search_top_k_limits_results_correctly(
     qdrant_url: str,
     populated_collection: None,
 ) -> None:
@@ -265,13 +271,13 @@ def test_search_top_k_limits_results_correctly(
     _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     for k in (1, 2, 5):
-        result = adapter.search(base=BaseId(_BASE_ID), question="q", top_k=k)
+        result = await adapter.search(base=BaseId(_BASE_ID), question="q", top_k=k)
         assert len(result.chunks) == k, f"expected {k} chunks, got {len(result.chunks)}"
 
 
 @_skip_no_docker
 @pytest.mark.integration
-def test_search_payload_text_is_accessible(
+async def test_search_payload_text_is_accessible(
     qdrant_url: str,
     populated_collection: None,
 ) -> None:
@@ -282,7 +288,7 @@ def test_search_payload_text_is_accessible(
     )
     _patch_query_points_with_dense_search(adapter, _rand_vec())
 
-    result = adapter.search(base=BaseId(_BASE_ID), question="test", top_k=3)
+    result = await adapter.search(base=BaseId(_BASE_ID), question="test", top_k=3)
 
     for chunk in result.chunks:
         assert chunk.text.startswith("biomedical document"), chunk.text
@@ -290,7 +296,7 @@ def test_search_payload_text_is_accessible(
 
 @_skip_no_docker
 @pytest.mark.integration
-def test_search_raises_retrieval_error_for_unmapped_base(
+async def test_search_raises_retrieval_error_for_unmapped_base(
     qdrant_url: str,
     populated_collection: None,
 ) -> None:
@@ -302,12 +308,12 @@ def test_search_raises_retrieval_error_for_unmapped_base(
     _patch_query_points_with_dense_search(adapter, _rand_vec())
 
     with pytest.raises(RetrievalError, match="No collection mapped"):
-        adapter.search(base=BaseId("ID_230K"), question="test", top_k=3)
+        await adapter.search(base=BaseId("ID_230K"), question="test", top_k=3)
 
 
 @_skip_no_docker
 @pytest.mark.integration
-def test_search_raises_retrieval_error_for_nonexistent_collection(
+async def test_search_raises_retrieval_error_for_nonexistent_collection(
     qdrant_url: str,
 ) -> None:
     """No patching — real query_points fails for absent collection."""
@@ -316,7 +322,7 @@ def test_search_raises_retrieval_error_for_nonexistent_collection(
         collection_map={_BASE_ID: "nonexistent_collection_xyz"},
     )
     with pytest.raises(RetrievalError):
-        adapter.search(base=BaseId(_BASE_ID), question="test", top_k=3)
+        await adapter.search(base=BaseId(_BASE_ID), question="test", top_k=3)
 
 
 # ---------------------------------------------------------------------------

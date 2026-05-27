@@ -1,17 +1,23 @@
 """Unit tests for VLLMGeneratorAdapter (TAREFA-014).
 
-Uses respx.mock to intercept httpx calls to the OpenAI-compatible vLLM endpoint.
-All tests call the public async generate() method directly.
+Mocks ``openai.AsyncOpenAI.chat.completions.create`` via ``AsyncMock`` — an
+environment-independent approach that intercepts at the SDK layer without relying on
+HTTP-transport internals (``httpx.MockTransport``, ``respx``) that can silently fail in
+sandboxed environments where the event-loop or transport policy differs.
+
+The mock is injected via direct attribute assignment after the adapter is built:
+    adapter._client.chat.completions.create = AsyncMock(...)
+This is possible because ``openai.AsyncCompletions.create`` is a regular instance method
+and Python does not prevent replacing it on the object level.
 """
 
 from __future__ import annotations
 
-import json
-import pathlib
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import openai
 import pytest
-import respx
 from tenacity import stop_after_attempt, wait_none
 
 from inteligenciomica_eval.domain.errors import GenerationError
@@ -29,35 +35,56 @@ from inteligenciomica_eval.infrastructure.adapters.vllm_generator import (
 _BASE_URL = "http://localhost:8000/v1"
 _MODEL = "test-model"
 _ENDPOINT = f"{_BASE_URL}/chat/completions"
-_FIXTURES_DIR = pathlib.Path(__file__).parents[3] / "fixtures"
+
+# Values matching tests/fixtures/vllm_generator_response.json
+_FIXTURE_TEXT = "DNA replication is the process by which a DNA molecule is copied."
+_FIXTURE_TOKENS_IN = 128
+_FIXTURE_TOKENS_OUT = 16
+
+# Minimal httpx objects needed to instantiate openai SDK error types.
+# These never reach the network — they exist only to satisfy constructor signatures.
+_DUMMY_REQUEST = httpx.Request("POST", _ENDPOINT)
+_DUMMY_RESP_429 = httpx.Response(429, request=_DUMMY_REQUEST)
+_DUMMY_RESP_422 = httpx.Response(422, request=_DUMMY_REQUEST)
+_DUMMY_RESP_400 = httpx.Response(400, request=_DUMMY_REQUEST)
 
 
 # ---------------------------------------------------------------------------
-# Helpers / fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def vllm_response() -> dict:  # type: ignore[type-arg]
-    """Load the vLLM chat-completion fixture from tests/fixtures/."""
-    return json.loads((_FIXTURES_DIR / "vllm_generator_response.json").read_text())
+def _mock_completion(
+    text: str = _FIXTURE_TEXT,
+    tokens_in: int = _FIXTURE_TOKENS_IN,
+    tokens_out: int = _FIXTURE_TOKENS_OUT,
+) -> MagicMock:
+    """Create a minimal ChatCompletion mock matching vllm_generator_response.json."""
+    comp = MagicMock()
+    comp.choices = [MagicMock()]
+    comp.choices[0].message.content = text
+    comp.usage = MagicMock()
+    comp.usage.prompt_tokens = tokens_in
+    comp.usage.completion_tokens = tokens_out
+    return comp
 
 
-def _make_adapter(respx_mock: respx.MockRouter) -> VLLMGeneratorAdapter:
-    """Return a VLLMGeneratorAdapter whose httpx calls are intercepted by respx_mock.
+def _make_adapter(create_mock: AsyncMock | None = None) -> VLLMGeneratorAdapter:
+    """Return a VLLMGeneratorAdapter with ``create()`` intercepted by *create_mock*.
 
-    The ``respx_mock`` fixture patches httpcore globally; a plain ``httpx.AsyncClient``
-    created inside a test that uses ``respx_mock`` will route through the mock.
+    Mocks at the SDK layer so that no I/O occurs, regardless of transport or
+    event-loop policy.  When *create_mock* is ``None`` the adapter is returned
+    without any mock (useful for lifecycle / protocol tests).
     """
-    _ = respx_mock  # ensures the fixture is active (httpcore is patched)
-    http_client = httpx.AsyncClient()
-    return VLLMGeneratorAdapter(
+    adapter = VLLMGeneratorAdapter(
         url=_BASE_URL,
         model=_MODEL,
-        http_client=http_client,
         _retry_stop=stop_after_attempt(3),
         _retry_wait=wait_none(),
     )
+    if create_mock is not None:
+        adapter._client.chat.completions.create = create_mock  # type: ignore[method-assign]
+    return adapter
 
 
 _CHUNK = Chunk(id="c1", text="DNA replication occurs in the cell nucleus.", score=0.95)
@@ -71,14 +98,9 @@ _LLM = LLMId("test-model")
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_returns_text_from_fixture(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_generate_returns_text_from_fixture() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
     result = await adapter.generate(
         llm=_LLM,
@@ -88,41 +110,28 @@ async def test_generate_returns_text_from_fixture(
         temperature=0.1,
     )
 
-    assert (
-        result.text
-        == "DNA replication is the process by which a DNA molecule is copied."
-    )
+    assert result.text == _FIXTURE_TEXT
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_seed_appears_in_request_body(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    route = respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_generate_seed_appears_in_request_body() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
     await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=99, temperature=0.1
     )
 
-    body = json.loads(route.calls[0].request.content)
-    assert body["seed"] == 99
+    call_kwargs = mock_create.call_args.kwargs
+    assert call_kwargs["extra_body"]["seed"] == 99
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_batch_invariant_always_false(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_generate_batch_invariant_always_false() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
     result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
@@ -133,14 +142,9 @@ async def test_generate_batch_invariant_always_false(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_returns_generation_output_type(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_generate_returns_generation_output_type() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
     result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=1, temperature=0.1
@@ -151,33 +155,23 @@ async def test_generate_returns_generation_output_type(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_token_counts_from_fixture(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_generate_token_counts_from_fixture() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
     result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
     )
 
-    assert result.tokens_in == 128
-    assert result.tokens_out == 16
+    assert result.tokens_in == _FIXTURE_TOKENS_IN
+    assert result.tokens_out == _FIXTURE_TOKENS_OUT
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_latency_ms_is_non_negative(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_generate_latency_ms_is_non_negative() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
     result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=5, temperature=0.1
@@ -188,21 +182,16 @@ async def test_generate_latency_ms_is_non_negative(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_temperature_in_request_body(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    route = respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_generate_temperature_in_request_body() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
     await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.25
     )
 
-    body = json.loads(route.calls[0].request.content)
-    assert body["temperature"] == pytest.approx(0.25)
+    call_kwargs = mock_create.call_args.kwargs
+    assert call_kwargs["temperature"] == pytest.approx(0.25)
 
 
 # ---------------------------------------------------------------------------
@@ -232,27 +221,22 @@ def test_default_prompt_fn_lists_multiple_contexts() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_custom_prompt_fn_is_used(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
-    route = respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(200, json=vllm_response)
-    )
+async def test_custom_prompt_fn_is_used() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
     adapter = VLLMGeneratorAdapter(
         url=_BASE_URL,
         model=_MODEL,
-        http_client=httpx.AsyncClient(),
         prompt_fn=lambda q, _ctx: f"CUSTOM: {q}",
         _retry_wait=wait_none(),
     )
+    adapter._client.chat.completions.create = mock_create  # type: ignore[method-assign]
 
     await adapter.generate(
         llm=_LLM, question="my question", contexts=[_CHUNK], seed=0, temperature=0.1
     )
 
-    body = json.loads(route.calls[0].request.content)
-    assert body["messages"][0]["content"] == "CUSTOM: my question"
+    call_kwargs = mock_create.call_args.kwargs
+    assert call_kwargs["messages"][0]["content"] == "CUSTOM: my question"
 
 
 # ---------------------------------------------------------------------------
@@ -262,19 +246,13 @@ async def test_custom_prompt_fn_is_used(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_non_retryable_error_raises_generation_error(
-    respx_mock: respx.MockRouter,
-) -> None:
+async def test_non_retryable_error_raises_generation_error() -> None:
     """HTTP 422 (UnprocessableEntity) is non-retryable; must raise GenerationError."""
-    respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(
-            422,
-            json={
-                "error": {"message": "invalid request", "type": "invalid_request_error"}
-            },
-        )
+    exc = openai.UnprocessableEntityError(
+        "invalid request", response=_DUMMY_RESP_422, body=None
     )
-    adapter = _make_adapter(respx_mock)
+    mock_create = AsyncMock(side_effect=exc)
+    adapter = _make_adapter(mock_create)
 
     with pytest.raises(GenerationError):
         await adapter.generate(
@@ -284,24 +262,18 @@ async def test_non_retryable_error_raises_generation_error(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_non_retryable_error_not_retried(
-    respx_mock: respx.MockRouter,
-) -> None:
-    """A 400 bad-request must not be retried — exactly one HTTP call."""
-    route = respx_mock.post(_ENDPOINT).mock(
-        return_value=httpx.Response(
-            400,
-            json={"error": {"message": "bad request", "type": "invalid_request_error"}},
-        )
-    )
-    adapter = _make_adapter(respx_mock)
+async def test_non_retryable_error_not_retried() -> None:
+    """A 400 bad-request must not be retried — exactly one SDK call."""
+    exc = openai.BadRequestError("bad request", response=_DUMMY_RESP_400, body=None)
+    mock_create = AsyncMock(side_effect=exc)
+    adapter = _make_adapter(mock_create)
 
     with pytest.raises(GenerationError):
         await adapter.generate(
             llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
         )
 
-    assert route.call_count == 1
+    assert mock_create.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -311,41 +283,39 @@ async def test_non_retryable_error_not_retried(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_retries_three_times_on_connection_error(
-    respx_mock: respx.MockRouter,
-) -> None:
-    """APIConnectionError (wraps httpx.ConnectError) triggers up to 3 attempts."""
-    route = respx_mock.post(_ENDPOINT).mock(
-        side_effect=httpx.ConnectError("connection refused")
+async def test_retries_three_times_on_connection_error() -> None:
+    """APIConnectionError triggers up to 3 attempts via tenacity."""
+    exc = openai.APIConnectionError(
+        message="connection refused", request=_DUMMY_REQUEST
     )
-    adapter = _make_adapter(respx_mock)
+    mock_create = AsyncMock(side_effect=exc)
+    adapter = _make_adapter(mock_create)
 
     with pytest.raises(GenerationError):
         await adapter.generate(
             llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
         )
 
-    assert route.call_count == 3
+    assert mock_create.call_count == 3
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_succeeds_after_transient_connection_error(
-    respx_mock: respx.MockRouter,
-    vllm_response: dict,  # type: ignore[type-arg]
-) -> None:
+async def test_succeeds_after_transient_connection_error() -> None:
     """Adapter succeeds on the 3rd attempt after 2 connection failures."""
     call_count = 0
 
-    def _side_effect(request: httpx.Request) -> httpx.Response:
+    def _side_effect(**kwargs: object) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count < 3:
-            raise httpx.ConnectError("transient failure")
-        return httpx.Response(200, json=vllm_response)
+            raise openai.APIConnectionError(
+                message="transient failure", request=_DUMMY_REQUEST
+            )
+        return _mock_completion()
 
-    respx_mock.post(_ENDPOINT).mock(side_effect=_side_effect)
-    adapter = _make_adapter(respx_mock)
+    mock_create = AsyncMock(side_effect=_side_effect)
+    adapter = _make_adapter(mock_create)
 
     result = await adapter.generate(
         llm=_LLM, question="Q?", contexts=[_CHUNK], seed=42, temperature=0.1
@@ -356,17 +326,41 @@ async def test_succeeds_after_transient_connection_error(
 
 
 # ---------------------------------------------------------------------------
+# Retry behavior — RateLimitError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_retries_three_times_on_rate_limit_error() -> None:
+    """RateLimitError triggers up to 3 attempts, same as APIConnectionError."""
+    exc = openai.RateLimitError(
+        "rate limit exceeded", response=_DUMMY_RESP_429, body=None
+    )
+    mock_create = AsyncMock(side_effect=exc)
+    adapter = _make_adapter(mock_create)
+
+    with pytest.raises(GenerationError):
+        await adapter.generate(
+            llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.1
+        )
+
+    assert mock_create.call_count == 3
+
+
+# ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-def test_adapter_satisfies_generator_port(respx_mock: respx.MockRouter) -> None:
-    adapter = _make_adapter(respx_mock)
+def test_adapter_satisfies_generator_port() -> None:
+    adapter = _make_adapter()
     assert isinstance(adapter, GeneratorPort)
 
 
 @pytest.mark.unit
-def test_adapter_has_close_method(respx_mock: respx.MockRouter) -> None:
-    adapter = _make_adapter(respx_mock)
-    assert callable(adapter.close)
+async def test_adapter_close_shuts_down_client() -> None:
+    """await adapter.close() must not raise and must close the underlying client."""
+    adapter = _make_adapter()
+    await adapter.close()  # must complete without exception

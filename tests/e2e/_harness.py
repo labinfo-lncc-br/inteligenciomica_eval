@@ -175,7 +175,7 @@ async def run_min_round(
                     if storage.exists(row_id):
                         continue
 
-                    retrieval = retriever.search(
+                    retrieval = await retriever.search(
                         base=base_id,
                         question=question.text,
                         top_k=3,

@@ -30,7 +30,9 @@ class StubRetriever:
         }
         self._default: tuple[Chunk, ...] = tuple(default_chunks)
 
-    def search(self, *, base: BaseId, question: str, top_k: int) -> RetrievalResult:
+    async def search(
+        self, *, base: BaseId, question: str, top_k: int
+    ) -> RetrievalResult:
         """Return planted chunks for *question*, capped at *top_k*.
 
         Args:

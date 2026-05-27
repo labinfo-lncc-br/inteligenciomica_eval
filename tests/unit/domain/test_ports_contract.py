@@ -122,7 +122,9 @@ def _make_result_frame() -> ResultFrame:
 
 
 class _StubRetriever:
-    def search(self, *, base: BaseId, question: str, top_k: int) -> RetrievalResult:
+    async def search(
+        self, *, base: BaseId, question: str, top_k: int
+    ) -> RetrievalResult:
         chunk = Chunk(id="c1", text="texto", score=0.9)
         return RetrievalResult(chunks=(chunk,), ids=("c1",), scores=(0.9,))
 
@@ -418,8 +420,8 @@ class TestDTOInstantiation:
 class TestStubBehavior:
     """Stubs retornam instâncias dos DTOs esperados (validação de integração leve)."""
 
-    def test_stub_retriever_returns_retrieval_result(self) -> None:
-        result = _StubRetriever().search(
+    async def test_stub_retriever_returns_retrieval_result(self) -> None:
+        result = await _StubRetriever().search(
             base=BaseId("IDx_400k"), question="O que é RAG?", top_k=5
         )
         assert isinstance(result, RetrievalResult)

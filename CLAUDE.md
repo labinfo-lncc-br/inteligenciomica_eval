@@ -266,20 +266,51 @@ Passos em ordem: checkout → setup-uv → setup-python 3.11 → `uv sync --froz
 | Port | Assinatura pública | Adapter | Observação |
 |------|--------------------|---------|------------|
 | `GeneratorPort.generate()` | `async def` ✅ | `VLLMGeneratorAdapter` | Async-first desde TAREFA-014-D |
-| `RetrieverPort.search()` | `def` (síncrono) ⚠️ | `QdrantRetrieverAdapter` | Usa `asyncio.run()` internamente; migrar para `async def` quando o application layer adotar async |
+| `RetrieverPort.search()` | `async def` ✅ | `QdrantRetrieverAdapter` | Promovido a async em TAREFA-013-F (correção spec v1.1) |
 
-A tensão do `RetrieverPort` está documentada em `docs/dev-log/M1_TAREFA-013_A_qdrant-gold-chunk-adapters.md` (Decisão Técnica §1) e na observação 4 do mesmo relatório.
+### Padrão para testes de adapters que usam SDK OpenAI
 
-### Padrão para testes de adapters HTTP
+**DECISÃO FINAL (TAREFA-014-G)**: mockar no nível do SDK, não no nível HTTP.
+
+`httpx.MockTransport(respx_mock.handler)` injetado via `openai.AsyncOpenAI(http_client=...)`
+pode não interceptar chamadas em ambientes sandboxed/containers onde a política do
+event-loop ou anyio/sniffio se comporta de forma diferente. O SDK v2 usa `asyncify` (que
+chama `asyncio.to_thread`) na primeira chamada, o que pode interferir com o transporte
+injetado dependendo do ambiente.
+
+**Padrão correto** — mockar diretamente em `adapter._client.chat.completions.create`:
 
 ```python
-# respx patcha httpcore globalmente via router.start()
-# NÃO usar httpx.AsyncClient(transport=respx_mock) — MockRouter não implementa AsyncTransport
-def _make_adapter(respx_mock: respx.MockRouter) -> VLLMGeneratorAdapter:
-    _ = respx_mock          # garante que o fixture está ativo (httpcore patchado)
-    http_client = httpx.AsyncClient()   # cliente plain — usa httpcore patchado
-    return VLLMGeneratorAdapter(url=..., model=..., http_client=http_client, ...)
+from unittest.mock import AsyncMock, MagicMock
+
+def _mock_completion(text="...", tokens_in=128, tokens_out=16) -> MagicMock:
+    comp = MagicMock()
+    comp.choices = [MagicMock()]
+    comp.choices[0].message.content = text
+    comp.usage = MagicMock()
+    comp.usage.prompt_tokens = tokens_in
+    comp.usage.completion_tokens = tokens_out
+    return comp
+
+def _make_adapter(create_mock: AsyncMock | None = None) -> VLLMGeneratorAdapter:
+    adapter = VLLMGeneratorAdapter(url=..., model=...,
+                                   _retry_stop=stop_after_attempt(3),
+                                   _retry_wait=wait_none())
+    if create_mock is not None:
+        adapter._client.chat.completions.create = create_mock  # type: ignore[method-assign]
+    return adapter
+
+# Para erros: instanciar com objetos httpx mínimos (não chegam à rede)
+_DUMMY_REQUEST = httpx.Request("POST", _ENDPOINT)
+exc = openai.APIConnectionError(message="conn refused", request=_DUMMY_REQUEST)
+mock_create = AsyncMock(side_effect=exc)
+# call_count valida retries; call_args.kwargs["extra_body"]["seed"] valida parâmetros
 ```
+
+Este padrão:
+- Não usa `respx`, `httpx.MockTransport` nem `http_client` para testes
+- É 100% determinístico e independente de versão de anyio/sniffio/httpx
+- Testa o adapter no nível correto de abstração (SDK, não transporte HTTP)
 
 ### Padrão de retry com tenacity (adapters de rede)
 

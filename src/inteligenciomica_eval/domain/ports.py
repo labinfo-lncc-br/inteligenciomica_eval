@@ -267,7 +267,7 @@ class RetrieverPort(Protocol):
     Implementações concretas ficam em ``infrastructure/adapters/``.
     """
 
-    def search(
+    async def search(
         self,
         *,
         base: BaseId,

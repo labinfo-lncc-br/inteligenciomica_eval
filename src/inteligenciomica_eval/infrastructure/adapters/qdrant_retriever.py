@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import pathlib
 import time
@@ -54,7 +53,7 @@ class QdrantRetrieverAdapter:
     # RetrieverPort interface
     # ------------------------------------------------------------------
 
-    def search(
+    async def search(
         self,
         *,
         base: BaseId,
@@ -62,10 +61,6 @@ class QdrantRetrieverAdapter:
         top_k: int,
     ) -> RetrievalResult:
         """Retrieve top-k chunks for *question* from the collection mapped to *base*.
-
-        Synchronous wrapper around the async implementation via ``asyncio.run``.
-        Must **not** be called from within a running event loop; use
-        ``_search_async`` directly from async contexts.
 
         Args:
             base: identifier of the knowledge base to search.
@@ -80,21 +75,15 @@ class QdrantRetrieverAdapter:
             RetrievalError: if the collection is not mapped, does not exist on
                 the Qdrant server, or any network/protocol error occurs.
         """
-        return asyncio.run(
-            self._search_async(base=base, question=question, top_k=top_k)
-        )
+        return await self._search_async(base=base, question=question, top_k=top_k)
 
     # ------------------------------------------------------------------
     # Lifecycle helpers (not part of the Protocol)
     # ------------------------------------------------------------------
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         """Close the underlying async HTTP connection to Qdrant."""
         await self._client.close()
-
-    def close(self) -> None:
-        """Synchronous wrapper around :meth:`aclose`."""
-        asyncio.run(self.aclose())
 
     # ------------------------------------------------------------------
     # Internal async implementation

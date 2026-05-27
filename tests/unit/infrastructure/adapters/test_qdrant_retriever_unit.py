@@ -72,31 +72,31 @@ def adapter(mock_qdrant_client: MagicMock) -> QdrantRetrieverAdapter:
 
 
 @pytest.mark.unit
-def test_search_maps_base_id_to_correct_collection(
+async def test_search_maps_base_id_to_correct_collection(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
-    adapter.search(base=BaseId("IDx_400k"), question="What is DNA?", top_k=5)
+    await adapter.search(base=BaseId("IDx_400k"), question="What is DNA?", top_k=5)
     call_kwargs = mock_qdrant_client.query_points.call_args.kwargs
     assert call_kwargs["collection_name"] == "coll_idx400k"
 
 
 @pytest.mark.unit
-def test_search_maps_second_base_to_correct_collection(
+async def test_search_maps_second_base_to_correct_collection(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
-    adapter.search(base=BaseId("ID_230K"), question="Protein folding?", top_k=3)
+    await adapter.search(base=BaseId("ID_230K"), question="Protein folding?", top_k=3)
     call_kwargs = mock_qdrant_client.query_points.call_args.kwargs
     assert call_kwargs["collection_name"] == "coll_id230k"
 
 
 @pytest.mark.unit
-def test_search_passes_top_k_as_limit(
+async def test_search_passes_top_k_as_limit(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
-    adapter.search(base=BaseId("IDx_400k"), question="test", top_k=3)
+    await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=3)
     assert mock_qdrant_client.query_points.call_args.kwargs["limit"] == 3
 
 
@@ -106,11 +106,11 @@ def test_search_passes_top_k_as_limit(
 
 
 @pytest.mark.unit
-def test_search_converts_scored_points_to_retrieval_result(
+async def test_search_converts_scored_points_to_retrieval_result(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
-    result = adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
+    result = await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
     assert isinstance(result, RetrievalResult)
     assert result.ids == ("chunk-1", "chunk-2")
     assert result.scores == (0.92, 0.78)
@@ -119,29 +119,29 @@ def test_search_converts_scored_points_to_retrieval_result(
 
 
 @pytest.mark.unit
-def test_search_result_ids_match_chunks_order(
+async def test_search_result_ids_match_chunks_order(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
-    result = adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
+    result = await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
     assert result.ids == tuple(c.id for c in result.chunks)
     assert result.scores == tuple(c.score for c in result.chunks)
 
 
 @pytest.mark.unit
-def test_search_handles_integer_point_id(
+async def test_search_handles_integer_point_id(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
     mock_qdrant_client.query_points.return_value = _make_query_response(
         [_make_scored_point(42, "integer id doc", 0.55)]
     )
-    result = adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
+    result = await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
     assert result.ids == ("42",)
 
 
 @pytest.mark.unit
-def test_search_handles_missing_text_payload(
+async def test_search_handles_missing_text_payload(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
@@ -150,17 +150,19 @@ def test_search_handles_missing_text_payload(
     sp.score = 0.5
     sp.payload = None  # no payload at all
     mock_qdrant_client.query_points.return_value = _make_query_response([sp])
-    result = adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
+    result = await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
     assert result.chunks[0].text == ""
 
 
 @pytest.mark.unit
-def test_search_returns_empty_result_on_no_hits(
+async def test_search_returns_empty_result_on_no_hits(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
     mock_qdrant_client.query_points.return_value = _make_query_response([])
-    result = adapter.search(base=BaseId("IDx_400k"), question="obscure query", top_k=5)
+    result = await adapter.search(
+        base=BaseId("IDx_400k"), question="obscure query", top_k=5
+    )
     assert result.chunks == ()
     assert result.ids == ()
     assert result.scores == ()
@@ -172,21 +174,21 @@ def test_search_returns_empty_result_on_no_hits(
 
 
 @pytest.mark.unit
-def test_search_raises_retrieval_error_for_unmapped_base(
+async def test_search_raises_retrieval_error_for_unmapped_base(
     adapter: QdrantRetrieverAdapter,
 ) -> None:
     with pytest.raises(RetrievalError, match="No collection mapped"):
-        adapter.search(base=BaseId("fixed"), question="test", top_k=5)
+        await adapter.search(base=BaseId("fixed"), question="test", top_k=5)
 
 
 @pytest.mark.unit
-def test_search_raises_retrieval_error_on_qdrant_exception(
+async def test_search_raises_retrieval_error_on_qdrant_exception(
     adapter: QdrantRetrieverAdapter,
     mock_qdrant_client: MagicMock,
 ) -> None:
     mock_qdrant_client.query_points.side_effect = RuntimeError("connection refused")
     with pytest.raises(RetrievalError, match="connection refused"):
-        adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
+        await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=5)
 
 
 # ---------------------------------------------------------------------------

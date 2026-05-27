@@ -116,38 +116,40 @@ class TestFakesSatisfyPorts:
 
 
 class TestStubRetriever:
-    def test_returns_default_chunk_for_unknown_question(self) -> None:
-        result = StubRetriever().search(
+    async def test_returns_default_chunk_for_unknown_question(self) -> None:
+        result = await StubRetriever().search(
             base=BaseId("IDx_400k"), question="unknown?", top_k=5
         )
         assert len(result.chunks) == 1
         assert result.ids == (result.chunks[0].id,)
 
-    def test_returns_planted_chunks_for_known_question(self) -> None:
+    async def test_returns_planted_chunks_for_known_question(self) -> None:
         planted = (Chunk(id="planted-1", text="ctx", score=0.95),)
         retriever = StubRetriever(responses={"q?": planted})
-        result = retriever.search(base=BaseId("IDx_400k"), question="q?", top_k=10)
+        result = await retriever.search(
+            base=BaseId("IDx_400k"), question="q?", top_k=10
+        )
         assert result.ids == ("planted-1",)
 
-    def test_top_k_caps_returned_chunks(self) -> None:
+    async def test_top_k_caps_returned_chunks(self) -> None:
         chunks = tuple(Chunk(id=f"c{i}", text=f"t{i}", score=0.5) for i in range(5))
         retriever = StubRetriever(responses={"q": chunks})
-        result = retriever.search(base=BaseId("IDx_400k"), question="q", top_k=2)
+        result = await retriever.search(base=BaseId("IDx_400k"), question="q", top_k=2)
         assert len(result.chunks) == 2
 
-    def test_deterministic_same_question_same_output(self) -> None:
+    async def test_deterministic_same_question_same_output(self) -> None:
         r = StubRetriever()
         base = BaseId("IDx_400k")
-        r1 = r.search(base=base, question="same?", top_k=1)
-        r2 = r.search(base=base, question="same?", top_k=1)
+        r1 = await r.search(base=base, question="same?", top_k=1)
+        r2 = await r.search(base=base, question="same?", top_k=1)
         assert r1.ids == r2.ids
 
-    def test_ids_and_scores_match_chunks(self) -> None:
+    async def test_ids_and_scores_match_chunks(self) -> None:
         planted = (
             Chunk(id="a", text="txt", score=0.7),
             Chunk(id="b", text="txt2", score=0.6),
         )
-        r = StubRetriever(responses={"q": planted}).search(
+        r = await StubRetriever(responses={"q": planted}).search(
             base=BaseId("IDx_400k"), question="q", top_k=5
         )
         assert r.ids == ("a", "b")
