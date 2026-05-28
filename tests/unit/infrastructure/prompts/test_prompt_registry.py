@@ -253,6 +253,32 @@ def test_prompt_version_uses_env_var_when_git_fails(
     assert reg.prompt_version == "v1.2.3-test"
 
 
+@pytest.mark.unit
+def test_prompt_version_fallback_unversioned_when_git_not_installed(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FileNotFoundError (git não instalado) deve cair no fallback, não propagar."""
+    mocker.patch(_SUBPROCESS_MODULE, side_effect=FileNotFoundError("git not found"))
+    monkeypatch.delenv("PROMPT_VERSION", raising=False)
+
+    reg = PromptRegistry()
+    assert reg.prompt_version == "unversioned"
+
+
+@pytest.mark.unit
+def test_prompt_version_env_var_used_when_git_not_installed(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FileNotFoundError (git ausente) → usa PROMPT_VERSION env var."""
+    mocker.patch(_SUBPROCESS_MODULE, side_effect=FileNotFoundError("git not found"))
+    monkeypatch.setenv("PROMPT_VERSION", "v2.0.0-ci")
+
+    reg = PromptRegistry()
+    assert reg.prompt_version == "v2.0.0-ci"
+
+
 # ---------------------------------------------------------------------------
 # get_default_registry — singleton
 # ---------------------------------------------------------------------------

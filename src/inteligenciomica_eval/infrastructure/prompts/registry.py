@@ -47,14 +47,21 @@ class PromptRegistry:
 
     @staticmethod
     def _capture_version() -> str:
-        """Captura a versão do prompt via ``git describe``; fallbacks em cascata."""
-        result = subprocess.run(
-            ["git", "describe", "--tags", "--dirty"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+        """Captura a versão do prompt via ``git describe``; fallbacks em cascata.
+
+        Trata ``OSError`` (inclui ``FileNotFoundError``) para ambientes onde o
+        binário ``git`` não está instalado — o fallback ainda é aplicado.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "describe", "--tags", "--dirty"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except OSError:
+            pass  # git não encontrado — continua para os fallbacks
 
         env_version = os.environ.get("PROMPT_VERSION")
         if env_version:
