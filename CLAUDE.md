@@ -16,7 +16,7 @@ decisões de arquitetura e convenções que devem ser respeitadas em **todas** a
 | Contratos arq.  | **import-linter** (`.importlinter` com 4 contratos)        |
 | Testes          | **pytest** + **pytest-cov** + **pytest-xdist** + **pytest-asyncio** |
 | Async tests     | `asyncio_mode = "auto"` no `pyproject.toml` — `async def` basta |
-| HTTP mock       | **respx** — patcha httpcore globalmente via `respx_mock` fixture |
+| HTTP mock       | **AsyncMock** (stdlib) para adapters com SDK; **respx** para httpx direto |
 | Pre-commit      | ruff-lint · ruff-format · mypy (via hook `local`)          |
 | Python          | **3.11+** (runtime); ambiente local usa 3.12               |
 
@@ -36,7 +36,7 @@ decisões de arquitetura e convenções que devem ser respeitadas em **todas** a
 |--------|-----|
 | `testcontainers[qdrant]>=4.3` | Testes de integração do `QdrantRetrieverAdapter` |
 | `pytest-asyncio>=0.23` | Suporte a `async def` em testes |
-| `respx>=0.20` | Mock de chamadas HTTP do `openai.AsyncOpenAI` |
+| `respx>=0.20` | Mock de chamadas httpx diretas (adapters sem SDK intermediário) |
 
 ### Ordem obrigatória de validação (antes de qualquer commit)
 
@@ -83,7 +83,7 @@ tests/
   conftest.py
   unit/                      ← ≥ 70% dos testes, < 10 ms cada
     domain/                  ← espelha src/domain/
-    infrastructure/adapters/ ← testes unitários dos adapters (respx.mock)
+    infrastructure/adapters/ ← testes unitários dos adapters (AsyncMock / respx)
   integration/               ← adapters reais, containers
     adapters/                ← QdrantRetrieverAdapter com testcontainers
   e2e/                       ← fluxos fim-a-fim (harness async desde TAREFA-014)
@@ -356,7 +356,7 @@ sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
 | Tarefa | Descrição | Status |
 |--------|-----------|--------|
 | 013 | `QdrantRetrieverAdapter` + `GoldChunkReaderAdapter` | ✅ |
-| 014 | `VLLMGeneratorAdapter` (async-first, openai SDK, tenacity, respx) | ✅ |
+| 014 | `VLLMGeneratorAdapter` (async-first, openai SDK, tenacity, AsyncMock) | ✅ |
 | 015 | `PromptRegistry` (templates Jinja2 versionados, `PackageLoader`) | 🔲 próxima |
 | 016 | `PrometheusJudgeAdapter` (rubrica biomédica, NaN-or-retry ADR-007) | 🔲 |
 | 017 | `RAGASLayer1Adapter` (RAGAS apontando para vllm-judge determinístico) | 🔲 |
