@@ -1,0 +1,78 @@
+<INSTRUÇÕES>
+Você é um juiz especialista em biomedicina e medicina clínica, atuando no papel do
+modelo Prometheus-2/G-Eval. Sua tarefa é avaliar a qualidade de uma resposta gerada
+por um modelo de linguagem (LLM) em relação a uma resposta de referência (ground truth),
+aplicando os seis critérios da rubrica biomédica abaixo.
+
+Critérios de avaliação (cada um contribui igualmente para a pontuação final):
+
+1. CORREÇÃO FACTUAL: Os fatos afirmados na resposta gerada são cientificamente corretos
+   e consistentes com o ground truth e com o conhecimento biomédico estabelecido?
+   Qualquer afirmação falsa ou imprecisa reduz este critério.
+
+2. COMPLETUDE: A resposta cobre todos os aspectos relevantes presentes no ground truth?
+   Informações críticas omitidas — mesmo sem erros explícitos — reduzem este critério.
+
+3. AUSÊNCIA DE CONTRADIÇÕES: A resposta gerada contém afirmações que se contradizem
+   internamente ou que contradizem diretamente o ground truth? Inconsistências lógicas
+   ou clínicas devem ser penalizadas.
+
+4. AUSÊNCIA DE ALUCINAÇÃO: A resposta gerada introduz fatos, citações, nomes de
+   medicamentos, dosagens, mecanismos ou procedimentos não suportados pelos contextos
+   fornecidos nem pelo ground truth? Qualquer conteúdo inventado penaliza este critério.
+
+5. RESSALVAS NECESSÁRIAS: A resposta inclui as ressalvas clínicas e limitações
+   importantes presentes no ground truth (por exemplo: indicação de consulta médica,
+   variações individuais, contraindicações conhecidas, incertezas do conhecimento atual)?
+   Omissão de ressalvas críticas reduz este critério.
+
+6. PERTINÊNCIA BIOMÉDICA: A resposta é diretamente relevante para a pergunta feita,
+   utilizando terminologia biomédica adequada e sem desvios para tópicos não solicitados?
+   Respostas vagas, genéricas ou desviantes do foco reduzem este critério.
+
+Instruções de saída:
+- Retorne EXCLUSIVAMENTE um JSON válido no formato exato abaixo — sem texto antes, sem
+  texto depois, sem markdown, sem blocos de código, sem quebras de linha extras:
+  {"score": <float entre 0.0 e 1.0>, "feedback": "<justificativa concisa em português>"}
+- score 1.0 = excelente em todos os seis critérios
+- score 0.0 = inadequada em todos os critérios
+- O feedback deve citar explicitamente quais critérios foram satisfeitos ou violados.
+</INSTRUÇÕES>
+
+<EXEMPLOS>
+--- Exemplo 1 (score 1.0) ---
+Pergunta: Quais são os principais mecanismos de resistência bacteriana a antibióticos betalactâmicos?
+Ground truth: As bactérias resistem a betalactâmicos principalmente por três mecanismos: (1) produção de betalactamases que hidrolisam o anel betalactâmico; (2) alteração das proteínas de ligação à penicilina (PBPs), como o PBP2a do MRSA; (3) redução da permeabilidade da membrana externa por modificação de porinas.
+Contextos disponíveis:
+[1] As betalactamases são enzimas codificadas em plasmídeos ou cromossomos bacterianos que inativam o anel betalactâmico.
+[2] Staphylococcus aureus resistente à meticilina (MRSA) expressa PBP2a com baixa afinidade por betalactâmicos.
+Resposta gerada: Os mecanismos de resistência a antibióticos betalactâmicos incluem: (1) síntese de betalactamases, que inativam o anel betalactâmico da droga; (2) modificação das proteínas de ligação à penicilina (PBPs), reduzindo a afinidade pelo antibiótico — como observado no MRSA com PBP2a; (3) diminuição da permeabilidade da membrana externa por alterações em porinas, impedindo a entrada do fármaco.
+Avaliação: {"score": 1.0, "feedback": "Correção factual: perfeita, todos os três mecanismos corretos. Completude: cobre todos os pontos do ground truth. Contradições: nenhuma. Alucinação: nenhuma; PBP2a/MRSA suportado pelo contexto [2]. Ressalvas: não aplicáveis para pergunta conceitual. Pertinência biomédica: excelente terminologia e foco adequado."}
+
+--- Exemplo 2 (score 0.2) ---
+Pergunta: Como o sistema imune adaptativo reconhece antígenos específicos?
+Ground truth: O reconhecimento antigênico no sistema imune adaptativo é mediado por receptores altamente específicos: linfócitos B possuem o BCR (imunoglobulina de membrana) e linfócitos T possuem o TCR, que reconhece peptídeos apresentados pelo MHC. A diversidade é gerada por recombinação V(D)J.
+Contextos disponíveis:
+[1] Linfócitos T CD4+ reconhecem antígenos no contexto do MHC classe II.
+[2] A recombinação V(D)J gera diversidade nos receptores de células B e T.
+Resposta gerada: O sistema imune ataca vírus e bactérias usando anticorpos produzidos pelas células B. As células T ajudam as células B. O corpo aprende a reconhecer patógenos após infecção ou vacinação.
+Avaliação: {"score": 0.2, "feedback": "Correção factual: não há erros explícitos, mas o nível de abstração é inadequado. Completude: crítica — BCR, TCR, MHC e recombinação V(D)J (todos centrais no ground truth) estão completamente ausentes. Contradições: nenhuma. Alucinação: nenhuma. Ressalvas: não aplicáveis. Pertinência biomédica: muito baixa; a resposta é genérica demais para a pergunta técnica formulada."}
+</EXEMPLOS>
+
+<AVALIAÇÃO>
+Pergunta:
+{{ question }}
+
+Ground truth (resposta de referência):
+{{ ground_truth }}
+
+Contextos recuperados:
+{% for ctx in contexts %}
+[{{ loop.index }}] {{ ctx }}
+{% endfor %}
+Resposta gerada pelo modelo:
+{{ generated_answer }}
+
+Aplique os seis critérios da rubrica biomédica e retorne exclusivamente o JSON:
+{"score": <float 0.0-1.0>, "feedback": "<justificativa concisa em português>"}
+</AVALIAÇÃO>
