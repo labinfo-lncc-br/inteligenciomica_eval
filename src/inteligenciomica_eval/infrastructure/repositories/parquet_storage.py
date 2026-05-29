@@ -437,16 +437,26 @@ class ParquetStorage:
         except Exception as exc:
             raise StorageError("append", _safe_msg(exc)) from exc
 
-    def update_metrics(self, row_id: RowId, metrics: MetricVector) -> None:
-        """Update the eight metric columns of an existing row (§5.4).
+    def update_metrics(
+        self,
+        row_id: RowId,
+        metrics: MetricVector,
+        final_score: FinalScore,
+        regime: DeterminismRegime,
+    ) -> None:
+        """Update metrics, final_score and regime of an existing row (§5.4).
 
-        Locates the row's Parquet file, overwrites the metric columns and
-        ``metric_nan_fields`` in place.  All other columns (provenance, answer,
-        final_score, flags) are left unchanged.
+        Promoted in TAREFA-026 (retroactive PR): besides the eight metric columns
+        and ``metric_nan_fields``, also overwrites ``final_score`` and the derived
+        ``batch_invariant`` (§4.3: ``regime is JUDGE``). All other columns
+        (provenance, answer, flags) are left unchanged. NaN ``final_score`` (ADR-007
+        NaN-sentinel) becomes NULL on write, like the metric columns.
 
         Args:
             row_id: identifier of the row to update.
             metrics: new metric values; NaN fields become NULL in Parquet.
+            final_score: aggregated final score from the judging pass (NaN → NULL).
+            regime: judge determinism regime — drives ``batch_invariant``.
 
         Raises:
             StorageError: if the row does not exist or on I/O failure.
@@ -474,6 +484,9 @@ class ParquetStorage:
                 "bertscore_f1": [_nan_to_none(metrics.bertscore_f1)],
                 "rubric_biomed_score": [_nan_to_none(metrics.rubric_biomed_score)],
                 "metric_nan_fields": [nan_fields_list],
+                "final_score": [_nan_to_none(final_score.value)],
+                # §4.3 invariant: batch_invariant ⟺ regime is JUDGE (TAREFA-022).
+                "batch_invariant": [regime is DeterminismRegime.JUDGE],
             }
 
             for col_name, values in update_values.items():
@@ -484,7 +497,11 @@ class ParquetStorage:
                 )
 
             pq.write_table(table, file_path)
-            self._log.info("metrics_updated", row_id=row_id.value[:12])
+            self._log.info(
+                "metrics_updated",
+                row_id=row_id.value[:12],
+                batch_invariant=regime is DeterminismRegime.JUDGE,
+            )
 
         except StorageError:
             raise

@@ -383,14 +383,23 @@ class TestUpdateMetrics:
 
         # Judging pass: update with real metrics
         new_metrics = _make_metrics(0.9)
-        storage.update_metrics(original.answer.row_id, new_metrics)
+        storage.update_metrics(
+            original.answer.row_id,
+            new_metrics,
+            FinalScore(0.88),
+            DeterminismRegime.JUDGE,
+        )
 
         frame = storage.load(round_id="round_1")
         restored = frame.results[0]
         assert restored.metrics.answer_correctness == pytest.approx(0.9, abs=1e-4)
         assert restored.metrics.bertscore_f1 == pytest.approx(0.9, abs=1e-4)
 
-    def test_update_does_not_change_other_columns(self, tmp_path: Path) -> None:
+    def test_update_writes_final_score_and_preserves_answer(
+        self, tmp_path: Path
+    ) -> None:
+        """update_metrics agora grava final_score + batch_invariant (TAREFA-026);
+        critical_failure_flag e generated_answer permanecem intactos."""
         storage = _make_storage(tmp_path)
         original = _make_result(
             metrics=_make_nan_metrics(),
@@ -400,15 +409,23 @@ class TestUpdateMetrics:
         )
         storage.append(original)
 
-        storage.update_metrics(original.answer.row_id, _make_metrics(0.7))
+        storage.update_metrics(
+            original.answer.row_id,
+            _make_metrics(0.7),
+            FinalScore(0.63),
+            DeterminismRegime.JUDGE,
+        )
 
         frame = storage.load(round_id="round_1")
         restored = frame.results[0]
-        # final_score not changed by update_metrics
-        assert math.isnan(restored.final_score.value)
-        # critical_failure_flag not changed
+        # final_score AGORA é gravado por update_metrics (PR retroativo TAREFA-026).
+        assert restored.final_score.value == pytest.approx(0.63, abs=1e-4)
+        # batch_invariant derivado de regime=JUDGE (§4.3).
+        assert restored.batch_invariant is True
+        assert restored.determinism_regime is DeterminismRegime.JUDGE
+        # critical_failure_flag não muda.
         assert restored.critical_failure_flag is None
-        # generated_answer not changed
+        # generated_answer não muda.
         assert restored.answer.generated_answer == "Resposta gerada."
 
     def test_update_partial_nan_metrics(self, tmp_path: Path) -> None:
@@ -426,7 +443,9 @@ class TestUpdateMetrics:
             bertscore_f1=_NAN,
             rubric_biomed_score=0.65,
         )
-        storage.update_metrics(original.answer.row_id, partial)
+        storage.update_metrics(
+            original.answer.row_id, partial, FinalScore(_NAN), DeterminismRegime.JUDGE
+        )
 
         frame = storage.load(round_id="round_1")
         m = frame.results[0].metrics
@@ -440,7 +459,9 @@ class TestUpdateMetrics:
         phantom_id = _make_row_id(question_id="q99")
 
         with pytest.raises(StorageError, match="update_metrics"):
-            storage.update_metrics(phantom_id, _make_metrics())
+            storage.update_metrics(
+                phantom_id, _make_metrics(), FinalScore(0.8), DeterminismRegime.JUDGE
+            )
 
     def test_update_metric_nan_fields_reflects_new_nans(self, tmp_path: Path) -> None:
         storage = _make_storage(tmp_path)
@@ -457,7 +478,9 @@ class TestUpdateMetrics:
             bertscore_f1=0.5,
             rubric_biomed_score=0.4,
         )
-        storage.update_metrics(original.answer.row_id, partial)
+        storage.update_metrics(
+            original.answer.row_id, partial, FinalScore(0.55), DeterminismRegime.JUDGE
+        )
 
         frame = storage.load(round_id="round_1")
         restored = frame.results[0]

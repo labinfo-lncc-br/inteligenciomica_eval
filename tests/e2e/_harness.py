@@ -268,12 +268,15 @@ async def run_min_round(
         )
         final_score = calculator.compute(metrics)
 
-        # 2a — update the eight metric columns (exercises ResultWriterPort.update_metrics,
-        #      the §3.4.4d / §5.4 contract between generation and judging passes).
-        storage.update_metrics(answer.row_id, metrics)
+        # 2a — update metrics, final_score and regime (exercises the evolved
+        #      ResultWriterPort.update_metrics, the §3.4.4d / §5.4 contract between
+        #      generation and judging passes — TAREFA-026 PR retroativo).
+        storage.update_metrics(
+            answer.row_id, metrics, final_score, DeterminismRegime.JUDGE
+        )
 
-        # 2b — re-append the complete result to also persist final_score and
-        #      critical_failure_flag, which update_metrics does not cover.
+        # 2b — re-append the complete result to also persist critical_failure_flag,
+        #      which update_metrics does not cover.
         #      last-write-wins semantics (ADR-009) ensure no duplication.
         complete = EvaluationResult(
             answer=answer,

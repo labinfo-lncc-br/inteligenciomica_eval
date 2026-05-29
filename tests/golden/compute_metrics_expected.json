@@ -1,0 +1,27 @@
+{
+  "description": "Golden do ComputeMetricsUseCase (TAREFA-026). 4 linhas cobrindo: (q1) normal — todas as métricas válidas → final computável; (q2) NaN parcial — métrica auxiliar bertscore_f1 NaN (peso 0 em §7.1) → final ainda computável → n_processed; (q3) NaN-sentinel completo — answer_correctness NaN (peso 0.45) → final NaN → n_nan_excluded; (q4) já pontuada (final_score=0.80) → pulada por idempotência (ADR-009), reprocessada com force=True. nan_metric indica qual métrica é forçada a NaN pelos fakes roteados por question_id.",
+  "run_id": "run-026-golden",
+  "round_id": "round_golden",
+  "rows": [
+    {"question_id": "q1_normal", "final_score_input": null, "nan_metric": null},
+    {"question_id": "q2_nan_parcial", "final_score_input": null, "nan_metric": "bertscore_f1"},
+    {"question_id": "q3_nan_sentinel", "final_score_input": null, "nan_metric": "answer_correctness"},
+    {"question_id": "q4_already_scored", "final_score_input": 0.80, "nan_metric": null}
+  ],
+  "expected_default": {
+    "run_id": "run-026-golden",
+    "n_processed": 2,
+    "n_skipped": 1,
+    "n_nan_excluded": 1,
+    "n_failed_terminal": 0,
+    "failed_row_ids": []
+  },
+  "expected_force": {
+    "run_id": "run-026-golden",
+    "n_processed": 3,
+    "n_skipped": 0,
+    "n_nan_excluded": 1,
+    "n_failed_terminal": 0,
+    "failed_row_ids": []
+  }
+}

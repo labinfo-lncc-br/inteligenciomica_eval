@@ -179,7 +179,13 @@ class _StubResultWriter:
     def append(self, result: EvaluationResult) -> None:
         pass
 
-    def update_metrics(self, row_id: RowId, metrics: MetricVector) -> None:
+    def update_metrics(
+        self,
+        row_id: RowId,
+        metrics: MetricVector,
+        final_score: FinalScore,
+        regime: DeterminismRegime,
+    ) -> None:
         pass
 
     def exists(self, row_id: RowId) -> bool:

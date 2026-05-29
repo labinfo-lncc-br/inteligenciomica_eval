@@ -5,7 +5,12 @@ from dataclasses import dataclass
 
 from inteligenciomica_eval.domain.entities import EvaluationResult
 from inteligenciomica_eval.domain.ports import ResultFrame
-from inteligenciomica_eval.domain.value_objects import MetricVector, RowId
+from inteligenciomica_eval.domain.value_objects import (
+    DeterminismRegime,
+    FinalScore,
+    MetricVector,
+    RowId,
+)
 
 
 @dataclass
@@ -62,18 +67,31 @@ class InMemoryResultWriter:
             round_id=self._round_id,
         )
 
-    def update_metrics(self, row_id: RowId, metrics: MetricVector) -> None:
-        """Update the metrics of an existing row in-place (no I/O).
+    def update_metrics(
+        self,
+        row_id: RowId,
+        metrics: MetricVector,
+        final_score: FinalScore,
+        regime: DeterminismRegime,
+    ) -> None:
+        """Update metrics, final_score and regime of an existing row (no I/O).
+
+        Mirrors the evolved ``ResultWriterPort.update_metrics`` contract
+        (TAREFA-026): persists métricas, ``final_score`` e ``regime`` — o
+        ``batch_invariant`` derivado (§4.3) acompanha o regime via
+        :meth:`EvaluationResult.with_metrics`.
 
         Args:
             row_id: identifier of the row to update.
             metrics: new metric vector to apply.
+            final_score: aggregated final score from the judging pass.
+            regime: judge determinism regime.
 
         Raises:
             KeyError: if the row has not been appended yet.
         """
         stored = self._store._rows[row_id.value]
-        updated_result = dataclasses.replace(stored.result, metrics=metrics)
+        updated_result = stored.result.with_metrics(metrics, final_score, regime)
         self._store._rows[row_id.value] = dataclasses.replace(
             stored, result=updated_result
         )

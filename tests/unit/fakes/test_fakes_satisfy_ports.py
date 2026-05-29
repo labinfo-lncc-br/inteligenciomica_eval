@@ -50,7 +50,12 @@ from inteligenciomica_eval.domain.ports import (
     StatsPort,
     VLLMServerManagerPort,
 )
-from inteligenciomica_eval.domain.value_objects import BaseId, LLMId
+from inteligenciomica_eval.domain.value_objects import (
+    BaseId,
+    DeterminismRegime,
+    FinalScore,
+    LLMId,
+)
 
 # ---------------------------------------------------------------------------
 # Shared sample fixture
@@ -333,11 +338,17 @@ class TestInMemoryStorage:
         writer.append(result)
 
         new_metrics = make_metric_vector(answer_correctness=0.99)
-        writer.update_metrics(result.answer.row_id, new_metrics)
+        writer.update_metrics(
+            result.answer.row_id,
+            new_metrics,
+            FinalScore(0.91),
+            DeterminismRegime.JUDGE,
+        )
 
         frame = reader.load(round_id="r1")
         assert len(frame.results) == 1
         assert frame.results[0].metrics.answer_correctness == pytest.approx(0.99)
+        assert frame.results[0].final_score.value == pytest.approx(0.91)
 
     def test_load_filters_by_round_id(self) -> None:
         store = InMemoryResultStore()
@@ -393,9 +404,15 @@ class TestInMemoryStorage:
         store = InMemoryResultStore()
         writer = InMemoryResultWriter(store)
         with pytest.raises(KeyError):
-            writer.update_metrics(make_row_id(), make_metric_vector())
+            writer.update_metrics(
+                make_row_id(),
+                make_metric_vector(),
+                FinalScore(0.8),
+                DeterminismRegime.JUDGE,
+            )
 
-    def test_update_metrics_preserves_other_fields(self) -> None:
+    def test_update_metrics_updates_score_and_preserves_answer(self) -> None:
+        """update_metrics atualiza métricas + final_score (TAREFA-026); answer intacto."""
         store = InMemoryResultStore()
         writer = InMemoryResultWriter(store, round_id="r1")
         reader = InMemoryResultReader(store)
@@ -403,13 +420,19 @@ class TestInMemoryStorage:
         writer.append(result)
 
         writer.update_metrics(
-            result.answer.row_id, make_metric_vector(bertscore_f1=0.55)
+            result.answer.row_id,
+            make_metric_vector(bertscore_f1=0.55),
+            FinalScore(0.42),
+            DeterminismRegime.JUDGE,
         )
 
         frame = reader.load(round_id="r1")
         stored = frame.results[0]
-        assert stored.final_score.value == pytest.approx(0.75)
+        # final_score AGORA é atualizado por update_metrics (PR retroativo TAREFA-026).
+        assert stored.final_score.value == pytest.approx(0.42)
         assert stored.metrics.bertscore_f1 == pytest.approx(0.55)
+        # campos do answer permanecem intactos.
+        assert stored.answer.generated_answer == result.answer.generated_answer
 
 
 # ---------------------------------------------------------------------------

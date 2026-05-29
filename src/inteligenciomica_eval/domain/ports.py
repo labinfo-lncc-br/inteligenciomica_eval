@@ -7,6 +7,8 @@ from typing import Protocol, runtime_checkable
 from inteligenciomica_eval.domain.entities import EvaluationResult
 from inteligenciomica_eval.domain.value_objects import (
     BaseId,
+    DeterminismRegime,
+    FinalScore,
     LLMId,
     MetricVector,
     RowId,
@@ -441,12 +443,25 @@ class ResultWriterPort(Protocol):
         """
         ...
 
-    def update_metrics(self, row_id: RowId, metrics: MetricVector) -> None:
-        """Atualiza o vetor de métricas de uma linha já existente.
+    def update_metrics(
+        self,
+        row_id: RowId,
+        metrics: MetricVector,
+        final_score: FinalScore,
+        regime: DeterminismRegime,
+    ) -> None:
+        """Atualiza métricas, score final e regime de uma linha existente (§5.4).
+
+        Promovido em TAREFA-026 (PR retroativo): além das métricas, persiste o
+        ``final_score`` agregado e o ``regime`` de determinismo do juiz. O
+        ``batch_invariant`` derivado (§4.3: ``regime is JUDGE``) também é gravado.
+        Síncrono — armazenamento é I/O local (não é adapter de rede, Nota M1 item 1).
 
         Args:
             row_id: identificador da linha a atualizar.
-            metrics: novo vetor de métricas calculadas.
+            metrics: novo vetor de métricas calculadas (NaN → NULL no Parquet).
+            final_score: score final agregado da passada de julgamento.
+            regime: regime de determinismo do juiz (``JUDGE`` na passada de métricas).
         """
         ...
 
