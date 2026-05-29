@@ -1,0 +1,29 @@
+[
+  {
+    "id": "identical",
+    "description": "Par idêntico (PT-BR biomédico) — BERTScore-F1 e ROUGE-L ~1.0.",
+    "answer": "Os receptores de adenosina do subtipo A2A modulam a neurotransmissão dopaminérgica e são alvos terapêuticos na doença de Parkinson.",
+    "ground_truth": "Os receptores de adenosina do subtipo A2A modulam a neurotransmissão dopaminérgica e são alvos terapêuticos na doença de Parkinson.",
+    "bertscore_f1_min": 0.98,
+    "rouge_l_min": 0.98,
+    "rouge_l_observed": 1.0
+  },
+  {
+    "id": "similar",
+    "description": "Paráfrase PT-BR biomédica — métricas moderadas-altas (ROUGE-L observado 0.70).",
+    "answer": "Inibidores de tirosina-quinase agem bloqueando a fosforilação de proteínas no tratamento da leucemia mieloide crônica.",
+    "ground_truth": "Os inibidores de tirosina-quinase bloqueiam a fosforilação de proteínas e são usados na leucemia mieloide crônica.",
+    "bertscore_f1_min": 0.70,
+    "rouge_l_min": 0.40,
+    "rouge_l_observed": 0.7
+  },
+  {
+    "id": "different",
+    "description": "Tópicos biomédicos distintos (fotossíntese vs. oncologia) — BERTScore-F1 e ROUGE-L baixos.",
+    "answer": "A fotossíntese converte luz solar em energia química nas plantas durante o dia.",
+    "ground_truth": "Os inibidores de tirosina-quinase tratam a leucemia mieloide crônica.",
+    "bertscore_f1_max": 0.60,
+    "rouge_l_max": 0.30,
+    "rouge_l_observed": 0.0769
+  }
+]

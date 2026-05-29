@@ -14,6 +14,10 @@ Notas de design:
   retém os pesos em memória) em vez da API funcional ``bert_score.score`` (que
   recarregaria o modelo a cada chamada); ``device="cpu"`` impede uso acidental de GPU
   em ambientes CUDA — o adapter é CPU-bound por design (§5.2).
+- **Lazy init por atributo de instância, NÃO ``cached_property``** (Nota M2 item 2,
+  TAREFA-025): o modelo é carregado na primeira chamada a :meth:`score` via
+  :meth:`_get_scorer`, que cacheia a instância em ``self._scorer``. Ver a docstring de
+  :meth:`_get_scorer` para o porquê de não usar ``functools.cached_property``.
 - **``rouge_l`` é campo de log, não de schema** (Nota M1 item 10): o ``ParquetStorage``
   (§5.3) persiste apenas ``bertscore_f1``; ``rouge_l`` é registrado via structlog
   em ``deterministic_metrics_computed`` para sanity check.
@@ -23,7 +27,6 @@ Notas de design:
 
 from __future__ import annotations
 
-import functools
 import time
 from typing import Any
 
@@ -32,76 +35,76 @@ import structlog
 from rouge_score import rouge_scorer
 
 from inteligenciomica_eval.domain.ports import AuxMetrics
+from inteligenciomica_eval.infrastructure.config.adapter_configs import (
+    DeterministicAdapterConfig,
+)
 
 _log = structlog.get_logger(__name__)
-
-_DEFAULT_LANG = "pt"
-_DEFAULT_DEVICE = "cpu"
 
 
 class DeterministicMetricsAdapter:
     """Calcula BERTScore-F1 e ROUGE-L para um par ``(answer, ground_truth)``.
 
-    Os textos são português biomédico; ``lang="pt"`` faz o BERTScore usar o modelo
-    ``bert-base-multilingual-cased`` (§5.2). Ambos os clientes internos são
-    *lazy-loaded* via :func:`functools.cached_property`, para não atrasar o startup
-    do processo — o modelo BERT é carregado **uma única vez** por adapter, na primeira
-    chamada a :meth:`score`, e reutilizado nas chamadas seguintes.
+    Os textos são português biomédico; ``lang="pt"`` (da config) faz o BERTScore usar o
+    modelo ``bert-base-multilingual-cased`` (§5.2). Ambos os scorers internos são
+    *lazy-loaded* via atributo de instância (``self._scorer`` / ``self._rouge``), não
+    via ``functools.cached_property`` — ver :meth:`_get_scorer`. O modelo BERT é
+    carregado **uma única vez** por adapter, na primeira chamada a :meth:`score`, e
+    reutilizado nas chamadas seguintes.
 
     Args:
-        lang: idioma passado ao BERTScore (padrão ``"pt"``).
-        rescale_with_baseline: reescala os scores do BERTScore pelo baseline do
-            idioma (padrão ``True``), tornando a faixa mais interpretável.
-        device: dispositivo do BERTScore (padrão ``"cpu"``) — fixado para impedir
-            uso acidental de GPU em ambientes CUDA (§5.2, adapter CPU-bound).
+        config: :class:`DeterministicAdapterConfig` com ``model_type``, ``lang``,
+            ``rescale_with_baseline`` e ``device``. ``None`` ⇒ defaults canônicos
+            (``lang="pt"`` etc.) — ``DeterministicMetricsAdapter()`` é equivalente a
+            ``DeterministicMetricsAdapter(DeterministicAdapterConfig())``.
     """
 
-    def __init__(
-        self,
-        *,
-        lang: str = _DEFAULT_LANG,
-        rescale_with_baseline: bool = True,
-        device: str = _DEFAULT_DEVICE,
-    ) -> None:
-        self._lang = lang
-        self._rescale_with_baseline = rescale_with_baseline
-        self._device = device
+    def __init__(self, config: DeterministicAdapterConfig | None = None) -> None:
+        self._config = config or DeterministicAdapterConfig()
+        # Lazy init por atributo de instância (NÃO cached_property — Nota M2 item 2).
+        self._scorer: bert_score.BERTScorer | None = None
+        self._rouge: rouge_scorer.RougeScorer | None = None
 
     # ------------------------------------------------------------------
-    # Clientes internos — lazy-load via cached_property (§ spec TAREFA-018)
+    # Scorers internos — lazy-load por atributo de instância (TAREFA-025)
     # ------------------------------------------------------------------
 
-    @functools.cached_property
-    def _bert_scorer(self) -> Any:
-        """Instancia o ``BERTScorer`` (modelo carregado uma única vez) sob demanda.
+    def _get_scorer(self) -> Any:
+        """Instancia o ``BERTScorer`` sob demanda e o cacheia em ``self._scorer``.
 
-        Usar a **classe** ``bert_score.BERTScorer`` — e não a API funcional
-        ``bert_score.score`` — é o que garante **carga única** do modelo BERT
-        multilíngue: a classe carrega os pesos no ``__init__`` e os mantém em memória,
-        enquanto ``bert_score.score`` recarregaria o modelo a cada chamada. O
-        ``cached_property`` garante que esse ``__init__`` rode uma só vez por adapter,
-        mantendo o ponto de carga fora do ``__init__`` do próprio adapter. ``device``
-        é fixado (padrão ``"cpu"``) para impedir uso acidental de GPU.
+        Usa a **classe** ``bert_score.BERTScorer`` (e não a API funcional
+        ``bert_score.score``) para garantir **carga única** do modelo: a classe retém
+        os pesos em memória, enquanto ``bert_score.score`` recarregaria o modelo a cada
+        chamada. O cache é um **atributo de instância** (``self._scorer``), não um
+        ``functools.cached_property``: ``cached_property`` materializa o valor no
+        ``__dict__`` da instância, mas seu descritor é compartilhado pela **classe** —
+        em suítes de teste isso facilita vazamento de estado mockado entre instâncias e
+        dificulta o isolamento. Um atributo de instância simples mantém cada adapter com
+        o seu próprio scorer (duas instâncias distintas têm ``_scorer`` distintos).
 
         Returns:
             :class:`bert_score.BERTScorer`. Tipado como ``Any`` porque ``bert_score``
             não fornece stubs de tipo.
         """
-        return bert_score.BERTScorer(
-            lang=self._lang,
-            rescale_with_baseline=self._rescale_with_baseline,
-            device=self._device,
-        )
+        if self._scorer is None:
+            self._scorer = bert_score.BERTScorer(
+                model_type=self._config.model_type,
+                lang=self._config.lang,
+                rescale_with_baseline=self._config.rescale_with_baseline,
+                device=self._config.device,
+            )
+        return self._scorer
 
-    @functools.cached_property
-    def _rouge_scorer(self) -> Any:
-        """Instancia o ``RougeScorer`` (rougeL, sem stemmer) sob demanda.
+    def _get_rouge(self) -> Any:
+        """Instancia o ``RougeScorer`` (rougeL, sem stemmer) sob demanda e o cacheia.
 
         Returns:
-            :class:`rouge_score.rouge_scorer.RougeScorer`. Tipado como ``Any``
-            porque ``rouge_score`` não fornece stubs de tipo.
+            :class:`rouge_score.rouge_scorer.RougeScorer`. Tipado como ``Any`` porque
+            ``rouge_score`` não fornece stubs de tipo.
         """
-        return rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
+        if self._rouge is None:
+            self._rouge = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
+        return self._rouge
 
     # ------------------------------------------------------------------
     # DeterministicMetricPort interface
@@ -144,7 +147,7 @@ class DeterministicMetricsAdapter:
         o ``ground_truth`` é a *reference*.
         """
         try:
-            _, _, f1 = self._bert_scorer.score([answer], [ground_truth])
+            _, _, f1 = self._get_scorer().score([answer], [ground_truth])
             return float(f1.mean().item())
         except Exception as exc:
             _log.warning(
@@ -161,7 +164,7 @@ class DeterministicMetricsAdapter:
         (referência) e o ``answer`` é a *prediction* (hipótese).
         """
         try:
-            scores = self._rouge_scorer.score(ground_truth, answer)
+            scores = self._get_rouge().score(ground_truth, answer)
             return float(scores["rougeL"].fmeasure)
         except Exception as exc:
             _log.warning(
