@@ -31,8 +31,8 @@ _NAN_RUBRIC = RubricResult(
     score=_NAN, feedback="Parsing failed after retries (ADR-007)."
 )
 
-_DEFAULT_AUX = AuxMetrics(bertscore_f1=0.82)
-_NAN_AUX = AuxMetrics(bertscore_f1=_NAN)
+_DEFAULT_AUX = AuxMetrics(bertscore_f1=0.82, rouge_l=0.71)
+_NAN_AUX = AuxMetrics(bertscore_f1=_NAN, rouge_l=_NAN)
 
 
 class FakeMetricSuite:
@@ -53,7 +53,7 @@ class FakeMetricSuite:
         self._fixed = fixed if fixed is not None else _DEFAULT_LAYER1
         self._inject_nan = inject_nan
 
-    def score(self, sample: EvaluationSample) -> Layer1Metrics:
+    async def score(self, sample: EvaluationSample) -> Layer1Metrics:
         """Return the configured Layer1Metrics.
 
         Args:
@@ -83,7 +83,7 @@ class FakeRubricJudge:
         self._fixed = fixed if fixed is not None else _DEFAULT_RUBRIC
         self._inject_nan = inject_nan
 
-    def score(self, sample: EvaluationSample) -> RubricResult:
+    async def score(self, sample: EvaluationSample) -> RubricResult:
         """Return the configured RubricResult.
 
         Args:
@@ -99,8 +99,9 @@ class FakeDeterministicMetric:
     """In-memory DeterministicMetricPort returning fixed or NaN AuxMetrics.
 
     Args:
-        fixed: AuxMetrics to return for every pair. Defaults to bertscore_f1=0.82.
-        inject_nan: when True, ignore ``fixed`` and return NaN bertscore_f1.
+        fixed: AuxMetrics to return for every pair. Defaults to
+            bertscore_f1=0.82, rouge_l=0.71.
+        inject_nan: when True, ignore ``fixed`` and return all-NaN AuxMetrics.
     """
 
     def __init__(
@@ -120,6 +121,6 @@ class FakeDeterministicMetric:
             ground_truth: reference answer text (accepted but unused).
 
         Returns:
-            Configured AuxMetrics; NaN bertscore_f1 when inject_nan is True.
+            Configured AuxMetrics; all-NaN when inject_nan is True.
         """
         return _NAN_AUX if self._inject_nan else self._fixed

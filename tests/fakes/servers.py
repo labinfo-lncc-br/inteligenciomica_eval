@@ -62,26 +62,28 @@ class FakeVLLMServerManager:
         self.wait_calls: list[WaitHealthyCall] = []
         self.stop_calls: list[StopCall] = []
 
-    def start(self, model: ModelSpec) -> ServerHandle:
+    async def start(self, model: ModelSpec) -> ServerHandle:
         """Record the start call and return a synthetic ServerHandle.
 
         Args:
             model: model specification to load.
 
         Returns:
-            ServerHandle with a synthetic PID and localhost URL.
+            ServerHandle with a synthetic PID, localhost URL and the
+            batch_invariant flag derived from ``model.extra_env``.
         """
         port = self._base_port + len(self.start_calls)
         handle = ServerHandle(
-            process_id=self._next_pid,
-            base_url=f"http://localhost:{port}",
-            model_id=model.model_id,
+            pid=self._next_pid,
+            url=f"http://localhost:{port}/v1",
+            model=model.model,
+            batch_invariant="VLLM_BATCH_INVARIANT" in model.extra_env,
         )
         self._next_pid += 1
         self.start_calls.append(StartCall(model=model, handle=handle))
         return handle
 
-    def wait_healthy(self, handle: ServerHandle, timeout_s: int) -> None:
+    async def wait_healthy(self, handle: ServerHandle, timeout_s: int) -> None:
         """Record the wait_healthy call without blocking.
 
         Args:
@@ -90,7 +92,7 @@ class FakeVLLMServerManager:
         """
         self.wait_calls.append(WaitHealthyCall(handle=handle, timeout_s=timeout_s))
 
-    def stop(self, handle: ServerHandle) -> None:
+    async def stop(self, handle: ServerHandle) -> None:
         """Record the stop call without any process termination.
 
         Args:

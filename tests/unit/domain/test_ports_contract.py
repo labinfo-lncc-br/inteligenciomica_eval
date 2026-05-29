@@ -149,7 +149,7 @@ class _StubGenerator:
 
 
 class _StubMetricSuite:
-    def score(self, sample: EvaluationSample) -> Layer1Metrics:
+    async def score(self, sample: EvaluationSample) -> Layer1Metrics:
         return Layer1Metrics(
             answer_correctness=0.8,
             answer_similarity=0.75,
@@ -161,13 +161,13 @@ class _StubMetricSuite:
 
 
 class _StubRubricJudge:
-    def score(self, sample: EvaluationSample) -> RubricResult:
+    async def score(self, sample: EvaluationSample) -> RubricResult:
         return RubricResult(score=4.0, feedback="Resposta adequada.")
 
 
 class _StubDeterministicMetric:
     def score(self, *, answer: str, ground_truth: str) -> AuxMetrics:
-        return AuxMetrics(bertscore_f1=0.82)
+        return AuxMetrics(bertscore_f1=0.82, rouge_l=0.71)
 
 
 class _StubGoldChunkReader:
@@ -208,15 +208,18 @@ class _StubAnnotationReader:
 
 
 class _StubVLLMServerManager:
-    def start(self, model: ModelSpec) -> ServerHandle:
+    async def start(self, model: ModelSpec) -> ServerHandle:
         return ServerHandle(
-            process_id=1234, base_url="http://localhost:8000", model_id=model.model_id
+            pid=1234,
+            url=f"http://localhost:{model.port}/v1",
+            model=model.model,
+            batch_invariant="VLLM_BATCH_INVARIANT" in model.extra_env,
         )
 
-    def wait_healthy(self, handle: ServerHandle, timeout_s: int) -> None:
+    async def wait_healthy(self, handle: ServerHandle, timeout_s: int) -> None:
         pass
 
-    def stop(self, handle: ServerHandle) -> None:
+    async def stop(self, handle: ServerHandle) -> None:
         pass
 
 
@@ -307,11 +310,13 @@ class TestDTOInstantiation:
 
     def test_evaluation_sample(self) -> None:
         s = EvaluationSample(
+            question_id="q_rag_001",
             question="O que é RAG?",
             ground_truth="Retrieval-Augmented Generation.",
             generated_answer="RAG combina retrieval com LLM.",
             contexts=("Contexto 1.", "Contexto 2."),
         )
+        assert s.question_id == "q_rag_001"
         assert s.question == "O que é RAG?"
         assert len(s.contexts) == 2
 
@@ -347,8 +352,9 @@ class TestDTOInstantiation:
         assert math.isnan(r.score)
 
     def test_aux_metrics(self) -> None:
-        a = AuxMetrics(bertscore_f1=0.82)
+        a = AuxMetrics(bertscore_f1=0.82, rouge_l=0.71)
         assert a.bertscore_f1 == pytest.approx(0.82)
+        assert a.rouge_l == pytest.approx(0.71)
 
     def test_wilcoxon_report(self) -> None:
         w = WilcoxonReport(statistic=2.3, p_value=0.02, effect_size=0.4, n_pairs=13)
@@ -387,21 +393,27 @@ class TestDTOInstantiation:
 
     def test_model_spec(self) -> None:
         spec = ModelSpec(
-            model_id="prometheus-8x7b-v2.0",
+            model="prometheus-8x7b-v2.0",
+            port=8001,
+            quantization=None,
             tensor_parallel_size=1,
-            gpu_memory_utilization=0.9,
+            max_model_len=4096,
+            extra_env={"VLLM_BATCH_INVARIANT": "1"},
         )
         assert spec.tensor_parallel_size == 1
-        assert spec.gpu_memory_utilization == pytest.approx(0.9)
+        assert spec.max_model_len == 4096
+        assert "VLLM_BATCH_INVARIANT" in spec.extra_env
 
     def test_server_handle(self) -> None:
         h = ServerHandle(
-            process_id=4321,
-            base_url="http://localhost:8001",
-            model_id="prometheus-8x7b-v2.0",
+            pid=4321,
+            url="http://localhost:8001/v1",
+            model="prometheus-8x7b-v2.0",
+            batch_invariant=True,
         )
-        assert h.process_id == 4321
-        assert h.base_url == "http://localhost:8001"
+        assert h.pid == 4321
+        assert h.url == "http://localhost:8001/v1"
+        assert h.batch_invariant is True
 
     def test_result_frame(self) -> None:
         frame = _make_result_frame()
@@ -439,14 +451,15 @@ class TestStubBehavior:
         assert isinstance(output, GenerationOutput)
         assert output.text == "resposta"
 
-    def test_stub_metric_suite_returns_layer1_metrics(self) -> None:
+    async def test_stub_metric_suite_returns_layer1_metrics(self) -> None:
         sample = EvaluationSample(
+            question_id="q_rag_002",
             question="O que é RAG?",
             ground_truth="Retrieval-Augmented Generation.",
             generated_answer="RAG.",
             contexts=("ctx",),
         )
-        metrics = _StubMetricSuite().score(sample)
+        metrics = await _StubMetricSuite().score(sample)
         assert isinstance(metrics, Layer1Metrics)
 
     def test_stub_result_writer_exists_returns_bool(self) -> None:
@@ -464,15 +477,19 @@ class TestStubBehavior:
         assert isinstance(f, FriedmanReport)
         assert isinstance(m, MLMReport)
 
-    def test_stub_vllm_manager_lifecycle(self) -> None:
+    async def test_stub_vllm_manager_lifecycle(self) -> None:
         manager = _StubVLLMServerManager()
         spec = ModelSpec(
-            model_id="llama3-8b",
+            model="llama3-8b",
+            port=8000,
+            quantization=None,
             tensor_parallel_size=1,
-            gpu_memory_utilization=0.85,
+            max_model_len=8192,
+            extra_env={},
         )
-        handle = manager.start(spec)
+        handle = await manager.start(spec)
         assert isinstance(handle, ServerHandle)
-        assert handle.model_id == "llama3-8b"
-        manager.wait_healthy(handle, timeout_s=60)
-        manager.stop(handle)
+        assert handle.model == "llama3-8b"
+        assert handle.batch_invariant is False
+        await manager.wait_healthy(handle, timeout_s=60)
+        await manager.stop(handle)

@@ -1,0 +1,22 @@
+{
+  "run_id": "m1_gate_run",
+  "round_id": "round_m1_gate",
+  "phase": "A",
+  "base": "IDx_400k",
+  "llm": "llm-biomed-gen",
+  "seed": 42,
+  "question_id": "q_resistencia_antibioticos",
+  "question": "Quais são os principais mecanismos de resistência bacteriana a antibióticos betalactâmicos?",
+  "ground_truth": "Os principais mecanismos são a produção de betalactamases que hidrolisam o anel betalactâmico, a alteração das proteínas ligadoras de penicilina (PBPs) reduzindo a afinidade do fármaco, e a diminuição da permeabilidade da membrana por redução de porinas.",
+  "fixed_answer": "As bactérias resistem aos betalactâmicos por três vias: betalactamases que degradam o anel betalactâmico, PBPs alteradas com menor afinidade, e redução de porinas que limita a entrada do fármaco.",
+  "judge_score": 0.78,
+  "judge_feedback": "Correção factual: boa. Completude: cobre betalactamases, PBPs e porinas. Contradições: nenhuma. Alucinação: nenhuma.",
+  "gold_chunk_ids": ["chunk_0", "chunk_2", "chunk_4"],
+  "chunks": [
+    {"id": "chunk_0", "text": "As betalactamases são enzimas que hidrolisam o anel betalactâmico, inativando penicilinas e cefalosporinas antes que atinjam seu alvo."},
+    {"id": "chunk_1", "text": "Carbapenêmicos são frequentemente reservados para infecções por bactérias multirresistentes produtoras de betalactamases de espectro estendido."},
+    {"id": "chunk_2", "text": "MRSA expressa a PBP2a, uma proteína ligadora de penicilina com baixa afinidade pelos betalactâmicos, conferindo resistência à meticilina."},
+    {"id": "chunk_3", "text": "O uso racional de antibióticos e a vigilância epidemiológica são pilares do controle da resistência antimicrobiana em ambiente hospitalar."},
+    {"id": "chunk_4", "text": "A redução do número de porinas na membrana externa de bactérias Gram-negativas diminui a entrada de antibióticos, contribuindo para a resistência."}
+  ]
+}

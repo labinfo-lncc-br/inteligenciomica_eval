@@ -227,6 +227,7 @@ async def run_min_round(
 
         answer = loaded.answer
         sample = EvaluationSample(
+            question_id=answer.question.question_id,
             question=answer.question.text,
             ground_truth=answer.question.ground_truth,
             generated_answer=answer.generated_answer,
@@ -242,12 +243,12 @@ async def run_min_round(
         is_nan_cell = cell_key in nan_cells
 
         if is_nan_cell:
-            l1 = nan_metric_suite.score(sample)
-            rubric = nan_rubric.score(sample)
+            l1 = await nan_metric_suite.score(sample)
+            rubric = await nan_rubric.score(sample)
             flag: int | None = None
         else:
-            l1 = normal_metric_suite.score(sample)
-            rubric = normal_rubric.score(sample)
+            l1 = await normal_metric_suite.score(sample)
+            rubric = await normal_rubric.score(sample)
             # Annotate non-NaN cells so critical_failure_rate is computable
             flag = 0
 

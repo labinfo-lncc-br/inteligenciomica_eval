@@ -424,7 +424,7 @@ class ParquetStorage:
             partition_dir.mkdir(parents=True, exist_ok=True)
             file_path = partition_dir / f"{row_id_hex}.parquet"
             is_overwrite = file_path.exists()
-            pq.write_table(table, file_path)  # type: ignore[no-untyped-call]
+            pq.write_table(table, file_path)
             if is_overwrite:
                 self._log.info("row_overwritten", row_id=row_id_hex[:12])
             else:
@@ -459,7 +459,7 @@ class ParquetStorage:
 
             # ParquetFile.read() bypasses Hive partition auto-detection that
             # would conflict with columns already stored in the file.
-            table = pq.ParquetFile(file_path).read()  # type: ignore[no-untyped-call]
+            table = pq.ParquetFile(file_path).read()
             nan_fields_list: list[str] = list(metrics.nan_fields())
 
             update_values: dict[str, list[Any]] = {  # Any: mixed float/None/list
@@ -481,7 +481,7 @@ class ParquetStorage:
                     col_idx, col_name, pa.array(values, type=pa_type)
                 )
 
-            pq.write_table(table, file_path)  # type: ignore[no-untyped-call]
+            pq.write_table(table, file_path)
             self._log.info("metrics_updated", row_id=row_id.value[:12])
 
         except StorageError:
@@ -508,7 +508,7 @@ class ParquetStorage:
             file_path = self._find_file(row_id.value)
             if file_path is None:
                 return False
-            table = pq.ParquetFile(file_path).read(columns=["generated_answer"])  # type: ignore[no-untyped-call]
+            table = pq.ParquetFile(file_path).read(columns=["generated_answer"])
             col = table.column("generated_answer")
             return len(col) > 0 and col[0].as_py() is not None
         except StorageError:
@@ -548,7 +548,7 @@ class ParquetStorage:
             if not files:
                 return ResultFrame(results=())
 
-            tables = [pq.ParquetFile(f).read() for f in files]  # type: ignore[no-untyped-call]
+            tables = [pq.ParquetFile(f).read() for f in files]
             combined = pa.concat_tables(tables)
             rows_dict = combined.to_pydict()
             n = len(rows_dict["row_id"])

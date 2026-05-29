@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-judge-valid",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "prometheus-eval/prometheus-8x7b-v2.0",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"score\": 0.85, \"feedback\": \"Correção factual: boa. Completude: cobre os pontos principais. Contradições: nenhuma. Alucinação: nenhuma. Ressalvas: presentes. Pertinência: adequada.\"}",
+        "refusal": null
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 512,
+    "completion_tokens": 32,
+    "total_tokens": 544
+  }
+}

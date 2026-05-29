@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-judge-malformed",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "prometheus-eval/prometheus-8x7b-v2.0",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Não consigo avaliar este texto no formato solicitado. Tente reformular a pergunta.",
+        "refusal": null
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 512,
+    "completion_tokens": 16,
+    "total_tokens": 528
+  }
+}

@@ -24,6 +24,10 @@ forbidden_modules =
     qdrant_client
     openai
     ragas
+    langchain_openai
+    langchain_community
+    bert_score
+    rouge_score
     deepeval
     statsmodels
     yaml
@@ -49,6 +53,10 @@ forbidden_modules =
     qdrant_client
     openai
     ragas
+    langchain_openai
+    langchain_community
+    bert_score
+    rouge_score
     deepeval
     statsmodels
     yaml

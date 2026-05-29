@@ -7,8 +7,8 @@ on:
     branches: ["**"]
 
 jobs:
-  ci:
-    name: Lint, type-check, and test
+  unit:
+    name: Lint, type-check, unit + e2e tests
     runs-on: ubuntu-latest
 
     steps:
@@ -39,5 +39,63 @@ jobs:
       - name: Import linter
         run: uv run lint-imports
 
-      - name: Tests with coverage
-        run: uv run pytest --cov=src --cov-report=xml --cov-fail-under=85 -n auto
+      - name: Unit + e2e tests with coverage
+        # Excludes integration tests (they need a Qdrant backend — see the
+        # `integration` job). pytest-randomly shuffles order to catch coupling.
+        run: >-
+          uv run pytest -m "not integration"
+          --cov=src --cov-report=xml:unit-coverage.xml
+          --cov-fail-under=85 -n auto
+
+      - name: Upload unit coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: unit-coverage.xml
+          flags: unit
+          fail_ci_if_error: false
+
+  integration:
+    name: Integration tests (real Qdrant)
+    runs-on: ubuntu-latest
+
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.9
+        ports:
+          - 6333:6333
+
+    env:
+      # The integration suite connects here instead of spinning up testcontainers.
+      QDRANT_URL: http://localhost:6333
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Integration tests with coverage
+        # No --cov-fail-under here: the integration suite alone is not meant to
+        # reach 85% (the `unit` job guards the global threshold). Coverage is
+        # reported separately so the adapters' end-to-end coverage is visible.
+        run: >-
+          uv run pytest -m integration
+          --cov=src --cov-report=term-missing --cov-report=xml:integration-coverage.xml
+          -v tests/integration/
+
+      - name: Upload integration coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: integration-coverage.xml
+          flags: integration
+          fail_ci_if_error: false

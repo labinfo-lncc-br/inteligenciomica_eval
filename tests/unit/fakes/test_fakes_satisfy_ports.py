@@ -57,6 +57,7 @@ from inteligenciomica_eval.domain.value_objects import BaseId, LLMId
 # ---------------------------------------------------------------------------
 
 _SAMPLE = EvaluationSample(
+    question_id="q_rag_001",
     question="O que é RAG?",
     ground_truth="Retrieval-Augmented Generation.",
     generated_answer="RAG combina retrieval com LLM.",
@@ -220,18 +221,18 @@ class TestFakeGenerator:
 
 
 class TestFakeMetricSuite:
-    def test_returns_canonical_metrics_by_default(self) -> None:
-        m = FakeMetricSuite().score(_SAMPLE)
+    async def test_returns_canonical_metrics_by_default(self) -> None:
+        m = await FakeMetricSuite().score(_SAMPLE)
         assert m.answer_correctness == pytest.approx(0.80)
         assert m.faithfulness == pytest.approx(0.90)
 
-    def test_inject_nan_returns_all_nan(self) -> None:
-        m = FakeMetricSuite(inject_nan=True).score(_SAMPLE)
+    async def test_inject_nan_returns_all_nan(self) -> None:
+        m = await FakeMetricSuite(inject_nan=True).score(_SAMPLE)
         assert math.isnan(m.answer_correctness)
         assert math.isnan(m.faithfulness)
         assert math.isnan(m.context_recall)
 
-    def test_fixed_override_honoured(self) -> None:
+    async def test_fixed_override_honoured(self) -> None:
         from inteligenciomica_eval.domain.ports import Layer1Metrics
 
         custom = Layer1Metrics(
@@ -242,13 +243,13 @@ class TestFakeMetricSuite:
             context_recall=0.50,
             answer_relevancy=0.50,
         )
-        m = FakeMetricSuite(fixed=custom).score(_SAMPLE)
+        m = await FakeMetricSuite(fixed=custom).score(_SAMPLE)
         assert m.answer_correctness == pytest.approx(0.50)
 
-    def test_deterministic_repeated_calls(self) -> None:
+    async def test_deterministic_repeated_calls(self) -> None:
         suite = FakeMetricSuite()
-        m1 = suite.score(_SAMPLE)
-        m2 = suite.score(_SAMPLE)
+        m1 = await suite.score(_SAMPLE)
+        m2 = await suite.score(_SAMPLE)
         assert m1.answer_correctness == m2.answer_correctness
 
 
@@ -258,17 +259,19 @@ class TestFakeMetricSuite:
 
 
 class TestFakeRubricJudge:
-    def test_returns_canonical_rubric_by_default(self) -> None:
-        r = FakeRubricJudge().score(_SAMPLE)
+    async def test_returns_canonical_rubric_by_default(self) -> None:
+        r = await FakeRubricJudge().score(_SAMPLE)
         assert r.score == pytest.approx(4.0)
 
-    def test_inject_nan_score(self) -> None:
-        r = FakeRubricJudge(inject_nan=True).score(_SAMPLE)
+    async def test_inject_nan_score(self) -> None:
+        r = await FakeRubricJudge(inject_nan=True).score(_SAMPLE)
         assert math.isnan(r.score)
 
-    def test_deterministic(self) -> None:
+    async def test_deterministic(self) -> None:
         judge = FakeRubricJudge()
-        assert judge.score(_SAMPLE).score == judge.score(_SAMPLE).score
+        r1 = await judge.score(_SAMPLE)
+        r2 = await judge.score(_SAMPLE)
+        assert r1.score == r2.score
 
 
 # ---------------------------------------------------------------------------
@@ -280,16 +283,19 @@ class TestFakeDeterministicMetric:
     def test_returns_canonical_aux_by_default(self) -> None:
         a = FakeDeterministicMetric().score(answer="ans", ground_truth="gt")
         assert a.bertscore_f1 == pytest.approx(0.82)
+        assert a.rouge_l == pytest.approx(0.71)
 
     def test_inject_nan(self) -> None:
         a = FakeDeterministicMetric(inject_nan=True).score(answer="a", ground_truth="g")
         assert math.isnan(a.bertscore_f1)
+        assert math.isnan(a.rouge_l)
 
     def test_deterministic(self) -> None:
         m = FakeDeterministicMetric()
         a1 = m.score(answer="x", ground_truth="y")
         a2 = m.score(answer="x", ground_truth="y")
         assert a1.bertscore_f1 == a2.bertscore_f1
+        assert a1.rouge_l == a2.rouge_l
 
 
 # ---------------------------------------------------------------------------
@@ -497,49 +503,68 @@ class TestFakeStats:
 # ---------------------------------------------------------------------------
 
 
+def _gen_spec() -> ModelSpec:
+    return ModelSpec(
+        model="m",
+        port=8000,
+        quantization=None,
+        tensor_parallel_size=1,
+        max_model_len=8192,
+        extra_env={},
+    )
+
+
 class TestFakeVLLMServerManager:
-    def test_start_returns_handle_with_model_id(self) -> None:
+    async def test_start_returns_handle_with_model(self) -> None:
         spec = ModelSpec(
-            model_id="llama3-8b",
+            model="llama3-8b",
+            port=8000,
+            quantization=None,
             tensor_parallel_size=1,
-            gpu_memory_utilization=0.85,
+            max_model_len=8192,
+            extra_env={},
         )
         mgr = FakeVLLMServerManager()
-        handle = mgr.start(spec)
-        assert handle.model_id == "llama3-8b"
-        assert handle.process_id >= 9000
+        handle = await mgr.start(spec)
+        assert handle.model == "llama3-8b"
+        assert handle.pid >= 9000
+        assert handle.batch_invariant is False
 
-    def test_consecutive_starts_get_different_ports(self) -> None:
+    async def test_judge_spec_sets_batch_invariant(self) -> None:
         spec = ModelSpec(
-            model_id="m", tensor_parallel_size=1, gpu_memory_utilization=0.8
+            model="prometheus",
+            port=8001,
+            quantization=None,
+            tensor_parallel_size=1,
+            max_model_len=4096,
+            extra_env={"VLLM_BATCH_INVARIANT": "1"},
         )
         mgr = FakeVLLMServerManager()
-        h1 = mgr.start(spec)
-        h2 = mgr.start(spec)
-        assert h1.base_url != h2.base_url
+        handle = await mgr.start(spec)
+        assert handle.batch_invariant is True
 
-    def test_records_all_lifecycle_calls(self) -> None:
-        spec = ModelSpec(
-            model_id="m", tensor_parallel_size=1, gpu_memory_utilization=0.8
-        )
+    async def test_consecutive_starts_get_different_ports(self) -> None:
         mgr = FakeVLLMServerManager()
-        handle = mgr.start(spec)
-        mgr.wait_healthy(handle, timeout_s=60)
-        mgr.stop(handle)
+        h1 = await mgr.start(_gen_spec())
+        h2 = await mgr.start(_gen_spec())
+        assert h1.url != h2.url
+
+    async def test_records_all_lifecycle_calls(self) -> None:
+        mgr = FakeVLLMServerManager()
+        handle = await mgr.start(_gen_spec())
+        await mgr.wait_healthy(handle, timeout_s=60)
+        await mgr.stop(handle)
 
         assert len(mgr.start_calls) == 1
         assert len(mgr.wait_calls) == 1
         assert len(mgr.stop_calls) == 1
         assert mgr.wait_calls[0].timeout_s == 60
 
-    def test_deterministic_pid_sequence(self) -> None:
-        spec = ModelSpec(
-            model_id="m", tensor_parallel_size=1, gpu_memory_utilization=0.8
-        )
+    async def test_deterministic_pid_sequence(self) -> None:
         mgr = FakeVLLMServerManager()
-        h1 = mgr.start(spec)
-        h2 = mgr.start(spec)
-        assert h2.process_id == h1.process_id + 1
+        h1 = await mgr.start(_gen_spec())
+        h2 = await mgr.start(_gen_spec())
+        assert h2.pid == h1.pid + 1
 
     def test_satisfies_vllm_server_manager_port(self) -> None:
         assert isinstance(FakeVLLMServerManager(), VLLMServerManagerPort)
@@ -553,8 +578,8 @@ class TestFakeVLLMServerManager:
 class TestNaNInjection:
     """Fakes that support inject_nan=True can drive ADR-007 NaN-propagation paths."""
 
-    def test_metric_suite_nan_all_fields(self) -> None:
-        m = FakeMetricSuite(inject_nan=True).score(_SAMPLE)
+    async def test_metric_suite_nan_all_fields(self) -> None:
+        m = await FakeMetricSuite(inject_nan=True).score(_SAMPLE)
         nan_fields = (
             m.answer_correctness,
             m.answer_similarity,
@@ -565,8 +590,8 @@ class TestNaNInjection:
         )
         assert all(math.isnan(v) for v in nan_fields)
 
-    def test_rubric_judge_nan_score(self) -> None:
-        r = FakeRubricJudge(inject_nan=True).score(_SAMPLE)
+    async def test_rubric_judge_nan_score(self) -> None:
+        r = await FakeRubricJudge(inject_nan=True).score(_SAMPLE)
         assert math.isnan(r.score)
         assert r.feedback  # feedback string is still non-empty
 

@@ -40,6 +40,10 @@ htmlcov/
 *.swp
 *.swo
 
+# Local agent tooling (Claude Code session config + Codex auditor skills)
+.claude/
+.codex/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -26,6 +26,7 @@ decisões de arquitetura e convenções que devem ser respeitadas em **todas** a
 |--------|--------------|-----|
 | `qdrant-client` | `>=1.7.1` | `AsyncQdrantClient` no `QdrantRetrieverAdapter` |
 | `openai` | `>=1.0` | `AsyncOpenAI` no `VLLMGeneratorAdapter` |
+| `httpx` | `>=0.27` | `AsyncClient` no polling `/health` do `VLLMServerManagerAdapter` |
 | `tenacity` | `>=8.0` | Retry com `AsyncRetrying` nos adapters de rede |
 | `structlog` | `>=24.0` | Logging estruturado em toda a infraestrutura |
 | `pydantic` | `>=2.0` | Validação de configuração YAML (apenas infra) |
@@ -34,9 +35,10 @@ decisões de arquitetura e convenções que devem ser respeitadas em **todas** a
 
 | Pacote | Uso |
 |--------|-----|
-| `testcontainers[qdrant]>=4.3` | Testes de integração do `QdrantRetrieverAdapter` |
+| `testcontainers[qdrant]>=4.3` | Testes de integração do `QdrantRetrieverAdapter` e gate M1 |
 | `pytest-asyncio>=0.23` | Suporte a `async def` em testes |
-| `respx>=0.20` | Mock de chamadas httpx diretas (adapters sem SDK intermediário) |
+| `respx>=0.20` | Mock de chamadas httpx diretas e do SDK OpenAI (via `respx.mock` global — TAREFA-021) |
+| `pytest-randomly>=3.15` | Ordenação aleatória de testes (detecta acoplamento de ordem — gate M1) |
 
 ### Ordem obrigatória de validação (antes de qualquer commit)
 
@@ -96,7 +98,7 @@ docs/
   dev-log/                   ← relatórios de execução por tarefa
   prompts_m0_tarefas_001_006.md
   prompts_m0_tarefas_007_012.md
-  prompts_m1_tarefas_013_021.md ← Nota de operacionalização M1 + prompts A/B
+  prompts_m1_tarefas_013_021_corrigido.md ← Nota de operacionalização M1 + prompts A/B (v1.1 — corrigido após auditoria 26/05/2026)
 ```
 
 ---
@@ -159,7 +161,10 @@ if __name__ == "__main__":  # pragma: no cover
 
 ## 6. Cobertura de Testes
 
-- `branch = true`, `source = ["src/inteligenciomica_eval"]`, `fail_under = 85`.
+- `branch = true`, `source = ["src/inteligenciomica_eval"]`. O gate de **85%** é imposto pelo
+  flag explícito `--cov-fail-under=85` (job `unit` + comando de gate local), **não** por
+  `fail_under` no `[tool.coverage.report]` — assim runs de suíte única (job `integration`) não
+  falham pela porcentagem menor (decisão TAREFA-021).
 - `pytest-cov` é um pacote **separado** de `coverage[toml]` — ambos devem estar em `dev` deps.
 - Dev deps ficam em `[dependency-groups] dev` (PEP 735), **não** em `[project.optional-dependencies]`.
   Com `[dependency-groups]`, `uv sync --frozen` instala runtime + dev por padrão — não precisa de `--all-extras`.
@@ -247,11 +252,18 @@ uv run pre-commit run --all-files  # roda hooks em todos os arquivos
 
 ## 10. CI
 
-Arquivo: `.github/workflows/ci.yml`
+Arquivo: `.github/workflows/ci.yml` — **dois jobs** desde TAREFA-021:
 
-Passos em ordem: checkout → setup-uv → setup-python 3.11 → `uv sync --frozen` →
-`ruff check` → `ruff format --check` → `mypy --strict src` → `lint-imports` →
-`pytest --cov=src --cov-report=xml --cov-fail-under=85 -n auto`
+- **`unit`**: checkout → setup-uv → setup-python 3.11 → `uv sync --frozen` →
+  `ruff check` → `ruff format --check` → `mypy --strict src` → `lint-imports` →
+  `pytest -m "not integration" --cov=src --cov-report=xml:unit-coverage.xml --cov-fail-under=85 -n auto`
+  → upload Codecov (flag `unit`). É o guardião do gate de 85%.
+- **`integration`**: `services.qdrant` (`qdrant/qdrant:v1.9`, porta 6333) + env `QDRANT_URL=http://localhost:6333`
+  → `uv sync --frozen` → `pytest -m integration --cov ... --cov-report=xml:integration-coverage.xml -v tests/integration/`
+  → upload Codecov (flag `integration`). **Sem** `--cov-fail-under` (uma suíte de integração não
+  atinge 85% sozinha; o job `unit` guarda o limiar).
+
+`pytest-randomly` está ativo por padrão em ambos os jobs (ordenação aleatória).
 
 ---
 
@@ -267,6 +279,10 @@ Passos em ordem: checkout → setup-uv → setup-python 3.11 → `uv sync --froz
 |------|--------------------|---------|------------|
 | `GeneratorPort.generate()` | `async def` ✅ | `VLLMGeneratorAdapter` | Async-first desde TAREFA-014-D |
 | `RetrieverPort.search()` | `async def` ✅ | `QdrantRetrieverAdapter` | Promovido a async em TAREFA-013-F (correção spec v1.1) |
+| `RubricJudgePort.score()` | `async def` ✅ | `PrometheusJudgeAdapter` | Promovido a async em TAREFA-016-D |
+| `MetricSuitePort.score()` | `async def` ✅ | `RAGASLayer1Adapter` | Promovido a async em TAREFA-017 (PR retroativo) |
+| `DeterministicMetricPort.score()` | `def` (síncrono) ✅ | `DeterministicMetricsAdapter` | Síncrono por natureza (TAREFA-018) — BERTScore/ROUGE são CPU-bound, sem I/O de rede |
+| `VLLMServerManagerPort.start/wait_healthy/stop()` | `async def` ✅ | `VLLMServerManagerAdapter` | Promovido a async em TAREFA-019 (PR retroativo); `close()` é extensão fora do port |
 
 ### Padrão para testes de adapters que usam SDK OpenAI
 
@@ -351,26 +367,36 @@ sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
 | 011 | Fakes e factories de teste (FakeGenerator, FakeMetricSuite, StubRetriever, …) | ✅ |
 | 012 | E2E stub — round mínimo em CPU (harness §3.4 duas passadas, golden values) | ✅ |
 
-### M1 — Adapters de Infraestrutura (TAREFA-013 a 021)
+### M1 — Adapters de Infraestrutura ✅ CONCLUÍDO (TAREFA-013 a 021)
 
 | Tarefa | Descrição | Status |
 |--------|-----------|--------|
 | 013 | `QdrantRetrieverAdapter` + `GoldChunkReaderAdapter` | ✅ |
 | 014 | `VLLMGeneratorAdapter` (async-first, openai SDK, tenacity, AsyncMock) | ✅ |
-| 015 | `PromptRegistry` (templates Jinja2 versionados, `PackageLoader`) | 🔲 próxima |
-| 016 | `PrometheusJudgeAdapter` (rubrica biomédica, NaN-or-retry ADR-007) | 🔲 |
-| 017 | `RAGASLayer1Adapter` (RAGAS apontando para vllm-judge determinístico) | 🔲 |
-| 018 | `DeterministicMetricsAdapter` (BERTScore + ROUGE-L, síncrono) | 🔲 |
-| 019 | `VLLMServerManagerAdapter` (subprocess local, polling /health) | 🔲 |
-| 020 | `AnnotationReaderAdapter` (JSONL de anotações críticas) | 🔲 |
-| 021 | Gate de integração M1 (pipeline adapter end-to-end) | 🔲 |
+| 015 | `PromptRegistry` (templates Jinja2 versionados, `PackageLoader`) | ✅ |
+| 016 | `PrometheusJudgeAdapter` (rubrica biomédica, NaN-or-retry ADR-007) | ✅ |
+| 017 | `RAGASLayer1Adapter` (RAGAS apontando para vllm-judge determinístico) | ✅ |
+| 018 | `DeterministicMetricsAdapter` (BERTScore + ROUGE-L, síncrono) | ✅ |
+| 019 | `VLLMServerManagerAdapter` (subprocess local, polling /health) | ✅ |
+| 020 | `AnnotationReaderAdapter` (JSONL de anotações críticas) | ✅ |
+| 021 | Gate de integração M1 (pipeline adapter end-to-end + smoke E2E) | ✅ |
 
 ### Cobertura atual
 
 ```
-579 passed, 7 skipped — 96.39% total coverage
-vllm_generator.py: 98% | qdrant_retriever.py: 95%
+697 passed, 11 skipped — 96.75% total coverage
+deterministic_metrics.py: 100% | prometheus_judge.py: 100% | vllm_generator.py: 100% | vllm_server_manager.py: 100% | annotation_reader.py: 100% | ragas_metrics.py: 87% | qdrant_retriever.py: 96%
 ```
+
+> Os 11 skips locais = 5 testes Qdrant (sem Docker) + 1 pipeline M1 (sem Docker) + 3 smoke
+> E2E (sem `E2E_ENABLED`) + 2 pré-existentes. No CI o job `integration` executa os de Qdrant.
+> `ragas_metrics.py` em 87% local: o ramo de construção real (embeddings + LLM) é coberto
+> apenas pelo teste de integração, que roda no job `integration` do CI.
+
+> **Gate de cobertura local**: usar `-n 4` (não `-n auto`) — a máquina de dev tem 20 núcleos
+> mas só 15 GB de RAM; com `-n auto`, os 20 workers importam torch (`bert_score` +
+> `sentence-transformers`/ragas) em tempo de coleta e estouram a RAM → swap → timeout.
+> CI permanece com `-n auto` (RAM suficiente).
 
 ---
 
@@ -396,9 +422,104 @@ vllm_generator.py: 98% | qdrant_retriever.py: 95%
 - Carregamento lazy + cache interno (`_ensure_loaded()`).
 - Levanta `StorageError` em arquivo ausente ou question_id não encontrado.
 
-### PromptRegistry (TAREFA-015 — a implementar)
+### PromptRegistry (TAREFA-015 — concluída)
 
 - Templates em `src/inteligenciomica_eval/infrastructure/prompts/*.j2`.
 - `jinja2.Environment(loader=PackageLoader(...))`.
 - `prompt_version` = `git describe --tags --dirty` capturado na inicialização.
-- `VLLMGeneratorAdapter` já aceita `prompt_fn: Callable[[str, Sequence[Chunk]], str]` para injeção — substituir `_default_prompt_fn` inline pelo `PromptRegistry`.
+- `get_default_registry() -> PromptRegistry` via `functools.cache` — singleton por processo.
+
+### PrometheusJudgeAdapter (TAREFA-016 — concluída)
+
+- Implementa `RubricJudgePort` com `async def score(sample: EvaluationSample) -> RubricResult`.
+- `batch_invariant=True` constante (ADR-003, `DeterminismRegime.JUDGE`) — nunca configurável.
+- `temperature=0.0`, `seed=42` em `extra_body` — determinismo do juiz (§9.3).
+- Política NaN-or-retry: tenacity 3 tentativas em `_ParseFailureError`; NaN ao esgotar (ADR-007).
+- `JudgeUnavailableError` em `APIConnectionError`/`APITimeoutError` — não retentável.
+- `PromptRegistry` injetado no construtor (não instanciado internamente).
+- Log `prometheus_judge_completed` inclui `question_id` de `EvaluationSample` (Nota M1 item 11).
+
+### RAGASLayer1Adapter (TAREFA-017 — concluída)
+
+- Implementa `MetricSuitePort` com `async def score(sample: EvaluationSample) -> Layer1Metrics`.
+- LLM-juiz via `LangchainLLMWrapper(ChatOpenAI(base_url=judge_url, temperature=0.0, api_key=SecretStr("EMPTY")))` — nunca usa `OPENAI_API_KEY` do ambiente.
+- Embeddings via `LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"))` — CPU, sem chamada de rede para embeddings.
+- 6 métricas calculadas **individualmente** via `await metric.single_turn_ascore(ragas_sample)` — nunca via `ragas.evaluate()` batch.
+- **`answer_correctness` precisa de `answer_similarity` wirado explicitamente** (`AnswerCorrectness(llm=…, embeddings=…, answer_similarity=AnswerSimilarity(embeddings=…))`): o RAGAS só seta `answer_similarity` em `init(run_config)`, que `single_turn_ascore` **não** chama — sem isso, `answer_correctness` é **sempre NaN** (`AssertionError: AnswerSimilarity must be set`, weights[1]=0.25). Bug de produção mascarado pelos unit tests (que injetam `_metrics`) e revelado pelo gate de integração (TAREFA-021-C).
+- Isolamento de NaN por campo (ADR-007): exceção em uma métrica → `float("nan")` só nela; as outras 5 continuam.
+- `_metrics: dict[str, Any]` injetável no construtor (`_` prefixo) — mesma convenção dos `_retry_stop`/`_retry_wait`.
+- Testes mocam `single_turn_ascore` via `AsyncMock` no dict injetado — padrão CLAUDE.md §11 (sem respx).
+- Log `ragas_layer1_computed` inclui `judge_url`, 6 valores de métrica, `nan_fields: list[str]`, `latency_ms`.
+- Dependências adicionadas: `ragas>=0.3`, `langchain-openai`, `langchain-community`, `sentence-transformers`, `langchain-google-vertexai` (shim de compatibilidade ragas 0.3.1 + langchain-community 0.4.x), `pillow` (requisito transitivo do ragas).
+
+### MetricSuitePort.score — promoção a async (TAREFA-017 PR retroativo)
+
+- `MetricSuitePort.score` promovido de `def` para `async def` (Nota M1 item 1 / I4).
+- Callers atualizados: `FakeMetricSuite.score`, `_StubMetricSuite.score`, harness e2e (`await metric_suite.score(sample)` ×2), `test_fakes_satisfy_ports.py` (5 testes → `async def` + `await`), `test_ports_contract.py` (1 teste).
+
+### EvaluationSample — extensão question_id (Nota M1 item 11 / I6)
+
+- Campo `question_id: str` adicionado como **primeiro campo obrigatório** do DTO.
+- PR retroativo aplicado em TAREFA-016-B (2026-05-28): atualiza `domain/ports.py`,
+  harness e2e, `test_ports_contract.py`, `test_fakes_satisfy_ports.py`,
+  `test_prometheus_judge.py`.
+- Motivação: `question_id` é obrigatório no schema §5.3 — ausência era lacuna de proveniência.
+
+### DeterministicMetricsAdapter (TAREFA-018 — concluída)
+
+- Implementa `DeterministicMetricPort` com `def score(self, *, answer: str, ground_truth: str) -> AuxMetrics` — **síncrono** (Nota M1 item 1; sem I/O de rede).
+- Calcula **BERTScore-F1** (`bert_score.BERTScorer`, `lang="pt"`, `rescale_with_baseline=True` → modelo `bert-base-multilingual-cased`) e **ROUGE-L** (`RougeScorer(["rougeL"], use_stemmer=False)`, `fmeasure`).
+- `batch_invariant` é **irrelevante** aqui (sem LLM/GPU) — documentado na docstring; resultado é função pura de `(answer, ground_truth)`.
+- **Carga única + CPU fixo** (correção auditoria 018-B): `_bert_scorer` é uma instância de `bert_score.BERTScorer(lang=..., rescale_with_baseline=..., device="cpu")` cacheada via `functools.cached_property` — a **classe** retém os pesos em memória (carga única), ao contrário da API funcional `bert_score.score`, que recarregaria o modelo a cada chamada. `device="cpu"` (parâmetro configurável, default) impede uso acidental de GPU em CUDA. `_rouge_scorer` instancia o `RougeScorer` sob demanda — modelo de ~700 MB nunca carrega no `__init__`.
+- `RougeScorer.score(target, prediction)`: `ground_truth` é o *target*, `answer` é a *prediction*. `BERTScorer.score(cands, refs)`: `answer` é *cand*, `ground_truth` é *ref*.
+- NaN absorvido **por campo** (DoD §14.2): `_compute_bertscore`/`_compute_rouge_l` têm `try/except` independentes → `float("nan")` só no campo que falhou + WARNING (`bertscore_failed`/`rouge_failed`); nunca propaga exceção.
+- Log `deterministic_metrics_computed` inclui `bertscore_f1`, `rouge_l`, `latency_ms`.
+- Testes golden em `tests/golden/det_metrics_golden.json` (3 pares PT-biomédicos calibrados). ROUGE roda sempre (puro Python); BERTScore golden usa o adapter real, pulado se o modelo/rede indisponível (probe `bertscore_available`, mesma filosofia dos testcontainers). Testes mockam `bert_score.BERTScorer` via pytest-mock com **alvo string** (`_patch_bert`) — cobertura 100% mesmo com BERTScore golden pulado; `TestModelLoadedOnce` é a regressão que comprova carga única (`BERTScorer` instanciado 1×, `.score` chamado 2×).
+- Dependências adicionadas: `bert-score>=0.3.13`, `rouge-score>=0.1.2` + override mypy `ignore_missing_imports` para `bert_score.*`/`rouge_score.*`.
+
+### AuxMetrics — extensão rouge_l (PR retroativo TAREFA-018)
+
+- `AuxMetrics` (definido em M0/TAREFA-005) estendido com `rouge_l: float` — spec linha 737 exige `AuxMetrics(bertscore_f1, rouge_l)`.
+- **`rouge_l` é campo de log, NÃO de schema** (Nota M1 item 10): o `ParquetStorage`/`MetricVector` (§5.3) persistem apenas `bertscore_f1`; `rouge_l` é logado via structlog para sanity check.
+- Callers atualizados: `FakeDeterministicMetric` (`tests/fakes/metrics.py`), `_StubDeterministicMetric` + `test_aux_metrics` (`test_ports_contract.py`), `test_fakes_satisfy_ports.py`.
+
+### VLLMServerManagerAdapter (TAREFA-019 — concluída)
+
+- Implementa `VLLMServerManagerPort` orquestrando processos vLLM locais via `asyncio.create_subprocess_exec` (Nota M1 item 9 — **sem Docker SDK**, reservado para M3). Nunca inicia vLLM real em CI.
+- **Métodos async-first** (Nota M1 item 1): `async start/wait_healthy/stop`. `async close()` é extensão de ciclo de vida — **fora do port** (análogo a `QdrantRetrieverAdapter.close`); rastreia handles vivos em `_handles`/`_processes`.
+- **Juiz vs. gerador visível no código (§9.2, bloqueador Prompt B)**: `ServerHandle.batch_invariant = "VLLM_BATCH_INVARIANT" in model.extra_env`. As envs `VLLM_BATCH_INVARIANT`/`VLLM_ENABLE_V1_MULTIPROCESSING` **nunca** são hardcoded no `start()` — só aparecem se o caller as colocou no `ModelSpec.extra_env`.
+- **Saneamento de env de regime (correção auditoria 019-C)**: `_build_env` remove `_RESERVED_REGIME_ENV = {VLLM_BATCH_INVARIANT, VLLM_ENABLE_V1_MULTIPROCESSING}` do `os.environ` herdado **antes** de aplicar `extra_env`. Assim um gerador (`extra_env={}`) nunca herda o regime do juiz de um orquestrador que por acaso tenha essas envs no ambiente; e o juiz **sobrescreve** valores "errados" do pai. O regime fica decidido exclusivamente por `extra_env` (env real coerente com `handle.batch_invariant`).
+- `start`: comando como **lista de args** (`sys.executable -m vllm.entrypoints.openai.api_server --model … --port … --tensor-parallel-size … --max-model-len … [--quantization …]`), `shell=False`; ambiente via `_build_env` (`os.environ` saneado + `extra_env`). `url` retornada com sufixo `/v1`.
+- `wait_healthy`: polling `GET {url sem /v1}/health` via `httpx.AsyncClient` a cada `_poll_interval_s` (default 2 s) até deadline; `httpx.HTTPError` (servidor subindo) tratado como "não saudável"; timeout → `_force_kill` (SIGKILL) + **`ServerStartTimeoutError`** (erro de domínio, não `TimeoutError` genérico).
+- `stop`: `SIGTERM` → `asyncio.wait_for(process.wait(), _sigterm_timeout_s=30s)` → `SIGKILL` em timeout (nunca SIGKILL direto). `ProcessLookupError` absorvido. Log `vllm_server_stopped` com `forced: bool`.
+- `_poll_interval_s`, `_sigterm_timeout_s`, `_clock` injetáveis (convenção `_`) → testes de timeout determinísticos e instantâneos (relógio falso via `itertools.count`, sem espera real).
+- Testes (Nota M1 item 7): `asyncio.create_subprocess_exec` mockado via pytest-mock (alvo string → mypy limpo no teste); **`respx`** para `/health` (intercepta `httpx.AsyncClient` direto — a ressalva do §11 era específica do SDK OpenAI + `asyncify`); `os.kill` mockado. 21 testes, adapter 100%.
+- Dependência adicionada: `httpx>=0.27` (promovida de transitiva a direta de runtime).
+
+### ModelSpec / ServerHandle — redesenho + VLLMServerManagerPort async (PR retroativo TAREFA-019)
+
+- **PR retroativo em `domain/ports.py`** (mesmo padrão dos ports async de M0/M1):
+  - `ModelSpec`: `model`, `port`, `quantization: str | None`, `tensor_parallel_size`, `max_model_len`, `extra_env: dict[str, str]` (antes: `model_id`, `tensor_parallel_size`, `gpu_memory_utilization`).
+  - `ServerHandle`: `pid`, `url`, `model`, `batch_invariant: bool` (antes: `process_id`, `base_url`, `model_id`).
+  - `VLLMServerManagerPort.start/wait_healthy/stop` promovidos de `def` para `async def` (Prompt A exige `await asyncio.create_subprocess_exec`/`httpx.AsyncClient`; Nota M1 item 1 lista o adapter como async-first).
+- Callers atualizados: `FakeVLLMServerManager` (`tests/fakes/servers.py` — async + novos campos), `_StubVLLMServerManager` + `test_model_spec`/`test_server_handle`/`test_stub_vllm_manager_lifecycle` (`test_ports_contract.py`), `TestFakeVLLMServerManager` (`test_fakes_satisfy_ports.py`).
+- `isinstance(adapter, VLLMServerManagerPort)` permanece válido — `runtime_checkable` verifica presença de método, não sincronicidade.
+
+### AnnotationReaderAdapter (TAREFA-020 — concluída)
+
+- Implementa `AnnotationReaderPort` com `def read(run_id: str) -> list[CriticalAnnotation]` — **síncrono** (Nota M1 item 1; leitura local de arquivo, sem I/O de rede). Camada 3 / ADR-010.
+- **Carga ansiosa na construção** (ao contrário do `GoldChunkReaderAdapter`, que é lazy): JSONL → índice `dict[str, list[CriticalAnnotation]]` no `__init__`. Erros de formato aparecem cedo (construção), não em `read()`.
+- **Arquivo ausente = Camada 3 desabilitada** (estado normal em M1): loga `INFO "annotation file not found, Camada 3 disabled"` + dict vazio → `read()` retorna `[]`. **Não** é erro (distinção do GoldChunk, onde arquivo ausente é `StorageError`).
+- `read` sempre devolve `list` (cópia fresca via `list(self._by_run.get(run_id, []))`), nunca `None`; `[]` para run_id inexistente.
+- **Validação → domínio**: `row_id` (hex) → `RowId` (`RowId.__post_init__` exige SHA-256 64-hex; `ValueError` vira `StorageError`); `flag ∈ {0,1}` senão `StorageError` (uniforme para linha malformada — não usa `InvalidCriticalFailureFlagError`); `note` opcional (`record.get("note")` → ausente/`null` = `None`). `StorageError` em `JSONDecodeError`/`KeyError`/`TypeError`/`ValueError`, com `lineno` + nome do arquivo.
+- `reload(annotation_file: Path | None = None) -> int`: recarrega (ou troca de) arquivo; retorna a contagem total de anotações.
+- Fixture: `tests/fixtures/annotations.jsonl` (3 anotações, uma com `note: null`). Casos de erro escrevem arquivos via `tmp_path`. 18 testes, adapter 100%.
+
+### Gate de Integração M1 (TAREFA-021 — concluída)
+
+- **Dois arquivos**: `tests/integration/test_m1_pipeline_integration.py` (pipeline E2E de 1 pergunta pelos 8 adapters) e `tests/e2e/test_m1_smoke_e2e.py` (instanciação + `isinstance` por Protocol; gated `E2E_ENABLED`). Fixture: `tests/fixtures/integration_question.json`.
+- **Mock — respx para os 3 (generator, judge, RAGAS)**: probe confirmou que `respx.mock` global **intercepta** `AsyncOpenAI.chat.completions.create` (a ressalva do §11 era do padrão `http_client=MockTransport`, não do `respx.mock` global). O RAGAS é construído **real** (sem `_metrics`) numa URL própria (`_RAGAS_URL`); suas chamadas LLM são roteadas por uma rota respx com *side-effect* (`_ragas_llm_route`) que devolve, **por métrica**, o JSON que o parser interno espera — discriminando pelos tokens do schema no prompt (`noncommittal`→relevancy; `"TP"`→correctness; `attributed`→recall; `statements`+`verdict`→faithfulness NLI; `statements`→geração; `verdict`→precision). Uma rota estática deixaria correctness/faithfulness/precision em NaN → `final_score` NaN. Embeddings ficam locais (HuggingFace, sem HTTP). `assert_all_called` garante que generator, judge e RAGAS foram chamados (decisão 021-C, resolvendo o item 3 do Prompt B).
+- **Qdrant**: fixture `qdrant_url` session-scoped resolve `QDRANT_URL` (serviço CI) → testcontainers (local) → `pytest.skip`. Coleção function-scoped (sem persistência entre testes). `query_points` redirecionado p/ vetor denso (Qdrant vanilla sem Inference API). Retrieval roda **fora** do `respx.mock` (senão respx interceptaria o httpx do Qdrant).
+- **Leitura do Parquet bruto**: usar `pq.ParquetFile(path).read()`, **nunca** `pq.read_table(path)` dentro da árvore Hive (`round_id=…`) — esta dispara auto-detecção de partição e conflita `round_id` string × dictionary (`ArrowTypeError`).
+- **`read_by_run_id` da spec não existe**: usar `load(round_id=, phase=)` (API real do `ResultReaderPort`). `EvaluationResult` persistido com `DeterminismRegime.GENERATOR` → `batch_invariant=False` no Parquet.
+- **CI** (§10): jobs `unit` (guarda 85%) e `integration` (serviço `qdrant/qdrant:v1.9`). `pytest-randomly` adicionado p/ `pytest --randomly` (item 8). Validação local via probe com `AsyncQdrantClient(location=":memory:")` (teste em si é skipado sem Docker).

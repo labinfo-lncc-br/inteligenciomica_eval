@@ -74,12 +74,15 @@ class EvaluationSample:
     """Amostra de avaliação fornecida ao MetricSuitePort e ao RubricJudgePort.
 
     Args:
+        question_id: identificador único da pergunta — rastreado no schema §5.3
+            e registrado em todos os eventos de log dos adapters de avaliação (I6).
         question: enunciado da pergunta avaliada.
         ground_truth: resposta de referência humana.
         generated_answer: resposta gerada pelo LLM sob avaliação.
         contexts: tupla de textos de contexto recuperados (chunks).
     """
 
+    question_id: str
     question: str
     ground_truth: str
     generated_answer: str
@@ -127,11 +130,17 @@ class RubricResult:
 class AuxMetrics:
     """Métricas auxiliares determinísticas de Camada 1 (sem LLM).
 
+    Ambos os campos são mantidos para uso interno e logging (Nota M1 item 10),
+    mas o ``ParquetStorage`` (§5.3) persiste apenas ``bertscore_f1`` — ``rouge_l``
+    é um campo de log, não de schema.
+
     Args:
         bertscore_f1: F1 do BERTScore; pode ser ``float('nan')`` se não computado.
+        rouge_l: F-measure do ROUGE-L; pode ser ``float('nan')`` se não computado.
     """
 
     bertscore_f1: float
+    rouge_l: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,17 +221,29 @@ class CriticalAnnotation:
 
 @dataclass(frozen=True, slots=True)
 class ModelSpec:
-    """Especificação de modelo para instanciação no vLLM (ADR-004/ADR-012).
+    """Especificação de modelo para instanciação no vLLM (ADR-004/ADR-012, §9.3).
+
+    A presença de ``"VLLM_BATCH_INVARIANT"`` em :attr:`extra_env` distingue o juiz
+    determinístico (regime BATCH_INVARIANT, ADR-003) dos geradores (§9.2.4) — é a
+    decisão arquitetural central de §9.2 e deve ficar visível no ``extra_env``.
 
     Args:
-        model_id: identificador HuggingFace ou caminho local do modelo.
+        model: identificador HuggingFace ou caminho local do modelo.
+        port: porta TCP local onde o servidor vLLM expõe a API OpenAI-compatible.
+        quantization: esquema de quantização (ex.: ``"awq"``) ou ``None`` para fp16.
         tensor_parallel_size: número de GPUs para tensor parallelism (>= 1).
-        gpu_memory_utilization: fração da memória GPU a alocar (em ``(0, 1]``).
+        max_model_len: comprimento máximo de contexto do modelo, em tokens.
+        extra_env: variáveis de ambiente extras para o processo vLLM. Para o juiz:
+            ``{"VLLM_BATCH_INVARIANT": "1", "VLLM_ENABLE_V1_MULTIPROCESSING": "0"}``;
+            para geradores: ``{}`` (sem BATCH_INVARIANT — §9.2.4).
     """
 
-    model_id: str
+    model: str
+    port: int
+    quantization: str | None
     tensor_parallel_size: int
-    gpu_memory_utilization: float
+    max_model_len: int
+    extra_env: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,14 +251,18 @@ class ServerHandle:
     """Handle de um servidor vLLM em execução (ADR-004/ADR-012).
 
     Args:
-        process_id: PID do processo vLLM.
-        base_url: URL base do endpoint OpenAI-compatible (ex.: ``"http://localhost:8000"``).
-        model_id: identificador do modelo carregado no servidor.
+        pid: PID do processo vLLM.
+        url: URL base do endpoint OpenAI-compatible, com sufixo ``/v1``
+            (ex.: ``"http://localhost:8000/v1"``).
+        model: identificador do modelo carregado no servidor.
+        batch_invariant: ``True`` se o servidor roda no regime BATCH_INVARIANT
+            (juiz determinístico, ADR-003); ``False`` para geradores (§9.2.4).
     """
 
-    process_id: int
-    base_url: str
-    model_id: str
+    pid: int
+    url: str
+    model: str
+    batch_invariant: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,10 +347,12 @@ class GeneratorPort(Protocol):
 class MetricSuitePort(Protocol):
     """Calcula métricas de Camada 1 (RAGAS) via o juiz determinístico (§5.1).
 
+    Método ``score`` é ``async`` — o adapter concreto faz chamadas de rede ao
+    vllm-judge via RAGAS (Nota M1 item 1 / I4: promoção de contrato para async-first).
     Implementações concretas ficam em ``infrastructure/adapters/``.
     """
 
-    def score(self, sample: EvaluationSample) -> Layer1Metrics:
+    async def score(self, sample: EvaluationSample) -> Layer1Metrics:
         """Avalia uma amostra e retorna as métricas RAGAS.
 
         Args:
@@ -341,10 +368,12 @@ class MetricSuitePort(Protocol):
 class RubricJudgePort(Protocol):
     """Avalia via rubrica biomédica com LLM-juiz determinístico (Camada 2, §5.1).
 
+    Método ``score`` é ``async`` — o adapter concreto faz chamadas de rede ao
+    vllm-judge (Nota M1 item 1 / I4: promoção de contrato para async-first).
     Implementações concretas ficam em ``infrastructure/adapters/``.
     """
 
-    def score(self, sample: EvaluationSample) -> RubricResult:
+    async def score(self, sample: EvaluationSample) -> RubricResult:
         """Avalia uma amostra segundo a rubrica biomédica.
 
         Args:
@@ -373,7 +402,7 @@ class DeterministicMetricPort(Protocol):
             ground_truth: resposta de referência humana.
 
         Returns:
-            :class:`AuxMetrics` com bertscore_f1 (pode ser NaN).
+            :class:`AuxMetrics` com bertscore_f1 e rouge_l (ambos podem ser NaN).
         """
         ...
 
@@ -521,10 +550,15 @@ class AnnotationReaderPort(Protocol):
 class VLLMServerManagerPort(Protocol):
     """Orquestra ciclo de vida de servidores vLLM no GH200 (§5.1, ADR-004/ADR-012).
 
+    Métodos ``async`` (Nota M1 item 1 / I4: promoção de contrato para async-first) —
+    o adapter concreto (``VLLMServerManagerAdapter``) lança o processo via
+    ``asyncio.create_subprocess_exec`` e faz polling de ``/health`` via
+    ``httpx.AsyncClient``. O método de ciclo de vida ``close()`` é uma extensão do
+    adapter — NÃO faz parte deste port (análogo a ``QdrantRetrieverAdapter.close``).
     Implementações concretas ficam em ``infrastructure/adapters/``.
     """
 
-    def start(self, model: ModelSpec) -> ServerHandle:
+    async def start(self, model: ModelSpec) -> ServerHandle:
         """Inicia um servidor vLLM com a especificação fornecida.
 
         Args:
@@ -535,19 +569,20 @@ class VLLMServerManagerPort(Protocol):
         """
         ...
 
-    def wait_healthy(self, handle: ServerHandle, timeout_s: int) -> None:
-        """Aguarda o servidor ficar saudável (health check passando).
+    async def wait_healthy(self, handle: ServerHandle, timeout_s: int) -> None:
+        """Aguarda o servidor ficar saudável (health check ``/health`` passando).
 
         Args:
             handle: handle do servidor a aguardar.
             timeout_s: tempo máximo de espera em segundos.
 
         Raises:
-            TimeoutError: se o servidor não responder dentro do prazo.
+            ServerStartTimeoutError: se o servidor não responder ``200`` em ``/health``
+                dentro do prazo (o processo é encerrado antes de levantar).
         """
         ...
 
-    def stop(self, handle: ServerHandle) -> None:
+    async def stop(self, handle: ServerHandle) -> None:
         """Para e libera os recursos de um servidor vLLM.
 
         Args:
