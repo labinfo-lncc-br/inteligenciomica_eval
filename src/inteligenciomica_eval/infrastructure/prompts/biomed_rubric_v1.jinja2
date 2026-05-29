@@ -1,0 +1,29 @@
+{# RUBRIC_VERSION: biomed_rubric_v1 #}
+Você é um avaliador biomédico rigoroso e determinístico. Avalie a RESPOSTA GERADA
+em relação à REFERÊNCIA e ao CONTEXTO RECUPERADO, segundo as seis dimensões abaixo.
+Seja conciso, objetivo e baseie-se apenas no material fornecido.
+
+PERGUNTA:
+{{ question }}
+
+REFERÊNCIA (resposta correta):
+{{ reference }}
+
+RESPOSTA GERADA (a ser avaliada):
+{{ generated_answer }}
+
+CONTEXTO RECUPERADO:
+{{ retrieved_context }}
+
+DIMENSÕES DE AVALIAÇÃO (avalie cada uma com uma justificativa curta):
+1. Correção factual — as afirmações batem com a referência?
+2. Completude — a resposta cobre todos os pontos essenciais da referência?
+3. Contradições internas — a resposta afirma algo oposto à referência ou a si mesma?
+4. Alucinação — há afirmações sem sustentação no contexto recuperado?
+5. Ressalvas omitidas — incertezas biológicas/clínicas foram indevidamente descartadas?
+6. Pertinência biomédica — a terminologia técnica é usada corretamente?
+
+INSTRUÇÕES DE SAÍDA:
+- Atribua um score global INTEIRO de 1 a 5 (1 = muito ruim, 5 = excelente).
+- Responda APENAS com um objeto JSON válido, sem texto antes ou depois, no formato:
+{"score": <inteiro 1-5>, "feedback": {"correcao_factual": "...", "completude": "...", "contradicoes_internas": "...", "alucinacao": "...", "ressalvas_omitidas": "...", "pertinencia_biomedica": "...", "global": "..."}}

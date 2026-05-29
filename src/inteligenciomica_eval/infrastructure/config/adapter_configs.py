@@ -8,6 +8,7 @@ dataclasses sem validação de fronteira, imutáveis e tipados.
 Cada adapter de M2 recebe a sua própria config:
 
 * :class:`RagasAdapterConfig` — ``RAGASLayer1Adapter`` (TAREFA-023).
+* :class:`RubricJudgeAdapterConfig` — ``PrometheusRubricJudgeAdapter`` (TAREFA-024).
 """
 
 from __future__ import annotations
@@ -52,3 +53,26 @@ class RagasAdapterConfig:
     hf_embed_model: str = _DEFAULT_HF_EMBED_MODEL
     # ADR-003: determinismo do juiz exige concorrência 1 (espelha RAGAS_MAX_CONCURRENCY).
     ragas_max_concurrency: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RubricJudgeAdapterConfig:
+    """Configuração do :class:`PrometheusRubricJudgeAdapter` (TAREFA-024, §5.2).
+
+    Camada 2 formal: rubrica biomédica de 6 dimensões avaliada pelo vllm-judge
+    determinístico (``temperature=0.0``, ADR-003). O ``prompt_version`` **não** é
+    campo desta config — é propriedade do artefato versionado (arquivo de prompt)
+    e o adapter o deriva do próprio arquivo, expondo ``adapter.prompt_version``
+    (fonte única para o schema §5.3).
+
+    Args:
+        vllm_judge_url: URL base do vllm-judge OpenAI-compatible, incluindo ``/v1``.
+        judge_model_name: identificador do modelo juiz.
+        vllm_judge_api_key: chave de API (placeholder ``"EMPTY"`` para vLLM local).
+        timeout_s: timeout por requisição ao juiz, em segundos.
+    """
+
+    vllm_judge_url: str
+    judge_model_name: str = _DEFAULT_JUDGE_MODEL
+    vllm_judge_api_key: str = "EMPTY"
+    timeout_s: int = 180
