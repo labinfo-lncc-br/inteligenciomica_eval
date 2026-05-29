@@ -162,6 +162,27 @@ class EvaluationResult:
     # Consultas puras
     # ------------------------------------------------------------------
 
+    @property
+    def batch_invariant(self) -> bool:
+        """Indica se a avaliação veio do juiz determinístico (§4.3, ADR-003).
+
+        Campo derivado de :attr:`determinism_regime`, **não** armazenado de forma
+        independente. Isso garante o invariante arquitetural §4.3 por construção:
+
+            ``batch_invariant is True`` ⟺ ``determinism_regime is JUDGE``
+
+        Como não existe atributo independente nem setter, é impossível instanciar
+        um :class:`EvaluationResult` com regime ``JUDGE`` e ``batch_invariant=False``
+        (ou vice-versa) — a inconsistência do §4.3 não é representável no domínio
+        (decisão TAREFA-022: invariante estrutural, não validação em runtime nem
+        WARNING no writer).
+
+        Returns:
+            ``True`` se ``determinism_regime is DeterminismRegime.JUDGE``;
+            ``False`` para ``DeterminismRegime.GENERATOR``.
+        """
+        return self.determinism_regime is DeterminismRegime.JUDGE
+
     def is_failure(self, threshold: float) -> bool:
         """Retorna ``True`` se o score final for estritamente abaixo do limiar.
 

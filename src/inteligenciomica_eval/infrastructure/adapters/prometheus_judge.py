@@ -23,6 +23,7 @@ from tenacity import (
 
 from inteligenciomica_eval.domain.errors import JudgeUnavailableError
 from inteligenciomica_eval.domain.ports import EvaluationSample, RubricResult
+from inteligenciomica_eval.domain.value_objects import DeterminismRegime
 from inteligenciomica_eval.infrastructure.prompts.registry import PromptRegistry
 
 _log = structlog.get_logger(__name__)
@@ -46,6 +47,11 @@ class PrometheusJudgeAdapter:
     ``batch_invariant`` é sempre ``True`` — este adapter representa chamadas ao
     servidor vllm-judge que roda com ``VLLM_BATCH_INVARIANT=1`` (ADR-003,
     ``DeterminismRegime.JUDGE``).  Este campo **nunca** deve ser configurável.
+
+    Expõe :attr:`determinism_regime` (= :data:`DeterminismRegime.JUDGE`) como
+    atributo de instância para que o ``ComputeMetricsUseCase`` (TAREFA-026)
+    descubra o regime sem depender de herança e propague ``batch_invariant=True``
+    até o Parquet (§4.3, §5.3, TAREFA-022).
 
     Política NaN-or-retry (Nota M1 item 3 / ADR-007):
 
@@ -76,6 +82,9 @@ class PrometheusJudgeAdapter:
     ) -> None:
         self._model = model
         self._registry = registry
+        # Regime fixo do juiz determinístico (ADR-003) — exposto para o use case
+        # descobrir o regime sem herança e propagar batch_invariant (TAREFA-022).
+        self.determinism_regime: DeterminismRegime = DeterminismRegime.JUDGE
         self._client = openai.AsyncOpenAI(
             base_url=judge_url,
             api_key="EMPTY",

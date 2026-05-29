@@ -200,7 +200,9 @@ def to_row(
         "prompt_version": prov.prompt_version,
         "temperature": prov.temperature,
         "seed": ans.seed.value,
-        "batch_invariant": result.determinism_regime == DeterminismRegime.JUDGE,
+        # Fonte única: property derivada de determinism_regime (§4.3, TAREFA-022).
+        # Valor idêntico ao cálculo anterior — sem mudança de comportamento.
+        "batch_invariant": result.batch_invariant,
         "vllm_version": prov.vllm_version,
         "ragas_version": prov.ragas_version,
         "config_hash": prov.config_hash,
