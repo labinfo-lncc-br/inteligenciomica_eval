@@ -1,4 +1,4 @@
-"""Testes unitários para RAGASLayer1Adapter (TAREFA-017).
+"""Testes unitários para RAGASLayer1Adapter (TAREFA-017 + upgrade TAREFA-023).
 
 Usa AsyncMock injetado via ``_metrics`` para interceptar ``single_turn_ascore``
 em cada objeto de métrica — mesmo padrão de TAREFA-014/016 (CLAUDE.md §11):
@@ -8,7 +8,10 @@ Estrutura:
 - TestProtocolConformance: isinstance + atribuição estática
 - TestHappyPath: 6 métricas retornadas, dentro de [0,1]
 - TestNaNIsolation: falha em uma métrica → NaN apenas nela
-- TestLogging: campos obrigatórios em ragas_layer1_computed
+- TestIOFailure (TAREFA-023): falha total de I/O → MetricComputationError
+- TestEmbedFallback (TAREFA-023): ramo HF local vs vllm endpoint
+- TestRagasVersion (TAREFA-023): ragas_version exposto + logado na 1ª chamada
+- TestLogging: campos obrigatórios em ragas_layer1_computed (+ embed_source)
 - TestSingleTurnSampleConstruction: campos corretos no SingleTurnSample RAGAS
 """
 
@@ -18,8 +21,12 @@ import math
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
+import openai
 import pytest
+from pytest_mock import MockerFixture
 
+from inteligenciomica_eval.domain.errors import MetricComputationError
 from inteligenciomica_eval.domain.ports import (
     EvaluationSample,
     Layer1Metrics,
@@ -27,8 +34,15 @@ from inteligenciomica_eval.domain.ports import (
 )
 from inteligenciomica_eval.infrastructure.adapters.ragas_metrics import (
     _METRIC_FIELDS,
+    RAGAS_MAX_CONCURRENCY,
     RAGASLayer1Adapter,
+    _build_embeddings,
 )
+from inteligenciomica_eval.infrastructure.config.adapter_configs import (
+    RagasAdapterConfig,
+)
+
+_ADAPTER_MOD = "inteligenciomica_eval.infrastructure.adapters.ragas_metrics"
 
 # ---------------------------------------------------------------------------
 # Constantes de teste
@@ -78,16 +92,22 @@ def _make_metrics(scores: dict[str, float] | None = None) -> dict[str, Any]:
     }
 
 
+def _make_config(*, vllm_embed_url: str | None = None) -> RagasAdapterConfig:
+    """Constrói RagasAdapterConfig de teste apontando para o vllm-judge local."""
+    return RagasAdapterConfig(judge_url=_JUDGE_URL, vllm_embed_url=vllm_embed_url)
+
+
 def _make_adapter(
     metrics: dict[str, Any] | None = None,
+    *,
+    config: RagasAdapterConfig | None = None,
 ) -> RAGASLayer1Adapter:
     """Constrói RAGASLayer1Adapter com métricas injetadas (sem rede/modelo)."""
     if metrics is None:
         metrics = _make_metrics()
-    return RAGASLayer1Adapter(
-        judge_url=_JUDGE_URL,
-        _metrics=metrics,
-    )
+    if config is None:
+        config = _make_config()
+    return RAGASLayer1Adapter(config, _metrics=metrics)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +263,135 @@ class TestNaNIsolation:
 
 
 # ---------------------------------------------------------------------------
+# Falha total de I/O → MetricComputationError (TAREFA-023, Nota M2 item 4)
+# ---------------------------------------------------------------------------
+
+
+_DUMMY_REQUEST = httpx.Request("POST", _JUDGE_URL)
+
+
+def _io_metric_mock() -> MagicMock:
+    """Mock cujo single_turn_ascore levanta APIConnectionError (servidor down)."""
+    exc = openai.APIConnectionError(request=_DUMMY_REQUEST)
+    m = MagicMock()
+    m.single_turn_ascore = AsyncMock(side_effect=exc)
+    return m
+
+
+class TestIOFailure:
+    async def test_connection_error_raises_metric_computation_error(self) -> None:
+        """APIConnectionError direto → MetricComputationError (não NaN)."""
+        metrics = _make_metrics(_DEFAULT_SCORES)
+        metrics["answer_correctness"] = _io_metric_mock()
+        adapter = _make_adapter(metrics)
+
+        with pytest.raises(MetricComputationError):
+            await adapter.score(_SAMPLE)
+
+    async def test_wrapped_connection_error_is_detected(self) -> None:
+        """APIConnectionError encadeado (RAGAS encapsula) também é falha total."""
+        inner = openai.APIConnectionError(request=_DUMMY_REQUEST)
+
+        async def _raise_wrapped(_: Any) -> float:
+            raise RuntimeError("ragas wrapper") from inner
+
+        metrics = _make_metrics(_DEFAULT_SCORES)
+        wrapped = MagicMock()
+        wrapped.single_turn_ascore = _raise_wrapped
+        metrics["faithfulness"] = wrapped
+        adapter = _make_adapter(metrics)
+
+        with pytest.raises(MetricComputationError):
+            await adapter.score(_SAMPLE)
+
+    async def test_parse_error_does_not_raise(self) -> None:
+        """ValueError de parsing continua virando NaN por campo (não levanta)."""
+        metrics = _make_metrics(_DEFAULT_SCORES)
+        metrics["faithfulness"].single_turn_ascore = AsyncMock(
+            side_effect=ValueError("bad json")
+        )
+        adapter = _make_adapter(metrics)
+
+        result = await adapter.score(_SAMPLE)  # não levanta
+        assert math.isnan(result.faithfulness)
+
+
+# ---------------------------------------------------------------------------
+# Fallback de embeddings: HF local vs vllm endpoint (TAREFA-023, Nota M2 item 5)
+# ---------------------------------------------------------------------------
+
+
+class TestEmbedFallback:
+    def test_hf_local_branch(self, mocker: MockerFixture) -> None:
+        """vllm_embed_url=None → HuggingFaceEmbeddings (origem hf_local)."""
+        hf = mocker.patch(f"{_ADAPTER_MOD}.HuggingFaceEmbeddings")
+        oai = mocker.patch(f"{_ADAPTER_MOD}.OpenAIEmbeddings")
+        mocker.patch(f"{_ADAPTER_MOD}.LangchainEmbeddingsWrapper")
+
+        config = RagasAdapterConfig(judge_url=_JUDGE_URL, vllm_embed_url=None)
+        _, source = _build_embeddings(config)
+
+        assert source == "hf_local"
+        hf.assert_called_once_with(model_name=config.hf_embed_model)
+        oai.assert_not_called()
+
+    def test_vllm_endpoint_branch(self, mocker: MockerFixture) -> None:
+        """vllm_embed_url setado → OpenAIEmbeddings (origem vllm_endpoint)."""
+        hf = mocker.patch(f"{_ADAPTER_MOD}.HuggingFaceEmbeddings")
+        oai = mocker.patch(f"{_ADAPTER_MOD}.OpenAIEmbeddings")
+        mocker.patch(f"{_ADAPTER_MOD}.LangchainEmbeddingsWrapper")
+
+        config = RagasAdapterConfig(
+            judge_url=_JUDGE_URL, vllm_embed_url="http://localhost:8002/v1"
+        )
+        _, source = _build_embeddings(config)
+
+        assert source == "vllm_endpoint"
+        oai.assert_called_once()
+        assert oai.call_args.kwargs["base_url"] == "http://localhost:8002/v1"
+        hf.assert_not_called()
+
+    def test_embed_source_attribute_reflects_config(self) -> None:
+        """adapter._embed_source segue a config mesmo com _metrics injetado."""
+        local = _make_adapter(config=_make_config(vllm_embed_url=None))
+        endpoint = _make_adapter(
+            config=_make_config(vllm_embed_url="http://localhost:8002/v1")
+        )
+        assert local._embed_source == "hf_local"
+        assert endpoint._embed_source == "vllm_endpoint"
+
+
+# ---------------------------------------------------------------------------
+# ragas_version exposto e logado (TAREFA-023, item 4)
+# ---------------------------------------------------------------------------
+
+
+class TestRagasVersion:
+    def test_max_concurrency_constant_is_one(self) -> None:
+        """RAGAS_MAX_CONCURRENCY é 1 (ADR-003)."""
+        assert RAGAS_MAX_CONCURRENCY == 1
+
+    def test_ragas_version_exposed(self) -> None:
+        """adapter.ragas_version é uma string não-vazia (importlib.metadata)."""
+        adapter = _make_adapter()
+        assert isinstance(adapter.ragas_version, str)
+        assert adapter.ragas_version  # non-empty
+
+    async def test_version_logged_on_first_call_only(self) -> None:
+        """ragas_adapter_first_call é emitido só na 1ª chamada a score()."""
+        import structlog.testing
+
+        adapter = _make_adapter()
+        with structlog.testing.capture_logs() as logs:
+            await adapter.score(_SAMPLE)
+            await adapter.score(_SAMPLE)
+
+        first_calls = [e for e in logs if e.get("event") == "ragas_adapter_first_call"]
+        assert len(first_calls) == 1
+        assert first_calls[0]["ragas_version"] == adapter.ragas_version
+
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
@@ -314,6 +463,19 @@ class TestLogging:
         ev = next(e for e in logs if e.get("event") == "ragas_layer1_computed")
         assert isinstance(ev["latency_ms"], int)
         assert ev["latency_ms"] >= 0
+
+    async def test_log_contains_ragas_version_and_embed_source(self) -> None:
+        """ragas_layer1_computed deve conter ragas_version e embed_source (item 7)."""
+        import structlog.testing
+
+        adapter = _make_adapter()
+
+        with structlog.testing.capture_logs() as logs:
+            await adapter.score(_SAMPLE)
+
+        ev = next(e for e in logs if e.get("event") == "ragas_layer1_computed")
+        assert ev["ragas_version"] == adapter.ragas_version
+        assert ev["embed_source"] == "hf_local"
 
 
 # ---------------------------------------------------------------------------

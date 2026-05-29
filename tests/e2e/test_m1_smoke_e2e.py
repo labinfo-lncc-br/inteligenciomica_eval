@@ -52,6 +52,9 @@ from inteligenciomica_eval.infrastructure.adapters.vllm_generator import (
 from inteligenciomica_eval.infrastructure.adapters.vllm_server_manager import (
     VLLMServerManagerAdapter,
 )
+from inteligenciomica_eval.infrastructure.config.adapter_configs import (
+    RagasAdapterConfig,
+)
 from inteligenciomica_eval.infrastructure.prompts.registry import PromptRegistry
 from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
     ParquetStorage,
@@ -85,7 +88,9 @@ def test_all_m1_adapters_instantiable_and_satisfy_protocols(
     judge = PrometheusJudgeAdapter(
         judge_url="http://localhost:8001/v1", registry=PromptRegistry()
     )
-    metric_suite = RAGASLayer1Adapter(judge_url="http://localhost:8001/v1", _metrics={})
+    metric_suite = RAGASLayer1Adapter(
+        RagasAdapterConfig(judge_url="http://localhost:8001/v1"), _metrics={}
+    )
     det_metrics = DeterministicMetricsAdapter()
     # Missing annotation file → Camada 3 disabled (no error, normal in M1).
     annotation_reader = AnnotationReaderAdapter(tmp_path / "annotations.jsonl")
@@ -111,7 +116,9 @@ def test_ragas_real_construction_when_model_available() -> None:
     and no network), so the smoke E2E stays robust across environments.
     """
     try:
-        metric_suite = RAGASLayer1Adapter(judge_url="http://localhost:8001/v1")
+        metric_suite = RAGASLayer1Adapter(
+            RagasAdapterConfig(judge_url="http://localhost:8001/v1")
+        )
     except Exception as exc:
         # Any model/network failure → skip (not fail): keeps the smoke env-independent.
         pytest.skip(f"RAGAS embedding model unavailable (no cache/network): {exc}")

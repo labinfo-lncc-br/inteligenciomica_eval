@@ -1,0 +1,11 @@
+{
+  "question": "Quais são os principais mecanismos de resistência bacteriana aos antibióticos betalactâmicos?",
+  "generated_answer": "Os principais mecanismos de resistência aos betalactâmicos são: a produção de betalactamases, que hidrolisam o anel betalactâmico e inativam o antibiótico; a alteração das proteínas de ligação à penicilina (PBPs), reduzindo a afinidade do fármaco pelo alvo, como ocorre no MRSA com a PBP2a; e a diminuição da permeabilidade da membrana externa por perda de porinas, limitando a entrada do antibiótico na célula bacteriana.",
+  "ground_truth": "A resistência bacteriana aos betalactâmicos decorre principalmente de três mecanismos: (1) produção de enzimas betalactamases que clivam o anel betalactâmico; (2) modificação das proteínas de ligação à penicilina (PBPs), reduzindo a afinidade ao antibiótico, exemplificada pela PBP2a do MRSA; e (3) redução da permeabilidade celular pela perda de porinas na membrana externa de bactérias gram-negativas.",
+  "contexts": [
+    "As betalactamases são enzimas que hidrolisam o anel betalactâmico de penicilinas e cefalosporinas, inativando o antibiótico antes que ele atinja seu alvo.",
+    "O Staphylococcus aureus resistente à meticilina (MRSA) expressa a PBP2a, uma proteína de ligação à penicilina com baixa afinidade pelos betalactâmicos, conferindo resistência.",
+    "Em bactérias gram-negativas, a perda ou modificação de porinas na membrana externa reduz a entrada de antibióticos hidrofílicos, contribuindo para a resistência."
+  ],
+  "expected_answer_correctness_min": 0.4
+}

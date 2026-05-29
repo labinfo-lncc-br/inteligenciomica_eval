@@ -82,6 +82,9 @@ from inteligenciomica_eval.infrastructure.adapters.ragas_metrics import (
 from inteligenciomica_eval.infrastructure.adapters.vllm_generator import (
     VLLMGeneratorAdapter,
 )
+from inteligenciomica_eval.infrastructure.config.adapter_configs import (
+    RagasAdapterConfig,
+)
 from inteligenciomica_eval.infrastructure.prompts.registry import PromptRegistry
 from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
     ParquetStorage,
@@ -393,7 +396,9 @@ async def test_m1_pipeline_end_to_end(
     judge = PrometheusJudgeAdapter(
         judge_url=_JUDGE_URL, registry=registry, model=_JUDGE_MODEL
     )
-    ragas = RAGASLayer1Adapter(judge_url=_RAGAS_URL, judge_model=_JUDGE_MODEL)
+    ragas = RAGASLayer1Adapter(
+        RagasAdapterConfig(judge_url=_RAGAS_URL, judge_model=_JUDGE_MODEL)
+    )
 
     with respx.mock(assert_all_called=True) as mock:
         gen_route = mock.post(f"{_GEN_URL}/chat/completions").mock(
