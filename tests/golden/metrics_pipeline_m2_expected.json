@@ -1,0 +1,30 @@
+{
+  "description": "Golden do gate de integração M2 (TAREFA-028, parte a). Pipeline ComputeMetricsUseCase + RetryableMetric* + RAGASLayer1Adapter (real, _metrics injetado) + PrometheusRubricJudgeAdapter (real, _client mockado no nível SDK) + DeterministicMetricsAdapter (BERTScore real). 4 cenários: q1 normal; q2 NaN parcial (answer_correctness, peso 0.45 → final NaN); q3 retry 1x→sucesso; q4 falha total de I/O 3x → NaN-sentinel. As chamadas de Camada 1 são contadas pelo call_args_list do AsyncMock de answer_correctness.single_turn_ascore (1 chamada por tentativa de RAGASLayer1Adapter.score) — equivalente §11-compatível de respx.calls.",
+  "run_id": "run-m2-integration",
+  "round_id": "round_m2_int",
+  "phase": "A",
+  "retry_config": {"max_retries": 2, "initial_wait_s": 0.0, "note": "max_retries=2 → ate 3 tentativas (1 inicial + 2 retries); q4 esgota na 3a (NaN-sentinel), batendo a 'contagem de 3 chamadas HTTP' da spec"},
+  "layer1_normal": {
+    "answer_correctness": 0.80,
+    "answer_similarity": 0.75,
+    "faithfulness": 0.90,
+    "context_precision": 0.85,
+    "context_recall": 0.70,
+    "answer_relevancy": 0.88
+  },
+  "rubric_normal_raw": 4,
+  "rubric_normal_normalized": 0.75,
+  "final_score_computation": "0.45*0.80 + 0.20*0.90 + 0.15*0.75 + 0.10*0.70 + 0.05*0.85 + 0.05*0.88 = 0.360 + 0.180 + 0.1125 + 0.070 + 0.0425 + 0.044 = 0.809 (answer_similarity e bertscore_f1 tem peso 0 em DEFAULT_WEIGHTS §7.1)",
+  "samples": {
+    "q1_normal": {"scenario": "normal", "expected_final_score": 0.809, "expected_layer1_attempts": 1},
+    "q2_nan_parcial": {"scenario": "answer_correctness_nan_parse_failure", "expected_final_score": null, "expected_layer1_attempts": 1},
+    "q3_retry": {"scenario": "io_failure_then_success", "expected_final_score": 0.809, "expected_layer1_attempts": 2},
+    "q4_exhaust": {"scenario": "io_failure_x3_nan_sentinel", "expected_final_score": null, "expected_layer1_attempts": 3}
+  },
+  "expected_report": {
+    "n_processed": 2,
+    "n_skipped": 0,
+    "n_nan_excluded": 2,
+    "n_failed_terminal": 0
+  }
+}

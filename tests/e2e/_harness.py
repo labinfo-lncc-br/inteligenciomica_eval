@@ -23,12 +23,23 @@ from fakes.generation import FakeGenerator
 from fakes.metrics import FakeDeterministicMetric, FakeMetricSuite, FakeRubricJudge
 from fakes.retrieval import StubRetriever
 
+from inteligenciomica_eval.application.compute_metrics_use_case import (
+    ComputeMetricsConfig,
+    ComputeMetricsInput,
+    ComputeMetricsReport,
+    ComputeMetricsUseCase,
+)
 from inteligenciomica_eval.domain.entities import (
     EvaluationResult,
     GeneratedAnswer,
     Question,
 )
-from inteligenciomica_eval.domain.ports import EvaluationSample
+from inteligenciomica_eval.domain.ports import (
+    DeterministicMetricPort,
+    EvaluationSample,
+    MetricSuitePort,
+    RubricJudgePort,
+)
 from inteligenciomica_eval.domain.services.aggregation import (
     AggregationService,
     ConfigAggregate,
@@ -297,3 +308,61 @@ async def run_min_round(
     )
 
     return newly_judged, aggregates
+
+
+async def run_m2_metrics_pass(
+    *,
+    storage: ParquetStorage,
+    run_id: str,
+    round_id: str,
+    phase: str,
+    metric_suite: MetricSuitePort,
+    rubric_judge: RubricJudgePort,
+    aux_metrics: DeterministicMetricPort,
+    failure_threshold: float,
+    force: bool = False,
+) -> tuple[ComputeMetricsReport, tuple[ConfigAggregate, ...]]:
+    """Run the M2 judging pass over pre-seeded generation rows, then aggregate.
+
+    Mirrors the production wiring of M2: the :class:`ComputeMetricsUseCase`
+    (TAREFA-026) consuming the real M2 adapters **already decorated** by the
+    ``RetryableMetric*`` adapters (TAREFA-027, Nota M2 item 4), followed by the
+    :class:`AggregationService` (TAREFA-008) over the persisted rows. Unlike
+    :func:`run_min_round` (which hand-wires the two passes with fakes), this helper
+    drives the **real** use case + adapters; the caller seeds the generation rows
+    (``storage.append`` with NaN ``final_score``) and supplies the adapters
+    (mocked at the SDK level per CLAUDE.md §11 — never respx, which hangs the
+    auditor sandbox with the OpenAI SDK).
+
+    Args:
+        storage: ParquetStorage acting as both ResultReaderPort and ResultWriterPort.
+        run_id: evaluation run identifier (provenance/log).
+        round_id: round to load/judge.
+        phase: experiment phase (``"A"`` or ``"B"``).
+        metric_suite: Camada 1 (RAGAS) already wrapped by ``RetryableMetricSuiteAdapter``.
+        rubric_judge: Camada 2 (rubrica) already wrapped by ``RetryableRubricJudgeAdapter``.
+        aux_metrics: Camada 1-aux determinística (BERTScore/ROUGE) — sem retry.
+        failure_threshold: limiar de falha passado a ``AggregationService``.
+        force: reprocessa linhas já pontuadas (idempotência ADR-009).
+
+    Returns:
+        Tupla ``(ComputeMetricsReport, tuple[ConfigAggregate, ...])``.
+    """
+    use_case = ComputeMetricsUseCase(
+        reader=storage,
+        writer=storage,
+        metric_suite=metric_suite,
+        rubric_judge=rubric_judge,
+        aux_metrics=aux_metrics,
+        score_calculator=FinalScoreCalculator(DEFAULT_WEIGHTS),
+        config=ComputeMetricsConfig(),
+    )
+    report = await use_case.execute(
+        ComputeMetricsInput(run_id=run_id, round_id=round_id, phase=phase, force=force)
+    )
+
+    rank_calculator = RankScoreCalculator(RANK_DEFAULT_WEIGHTS)
+    agg_service = AggregationService(rank_calculator)
+    frame = storage.load(round_id=round_id, phase=phase)
+    aggregates = agg_service.aggregate_all(frame.results, threshold=failure_threshold)
+    return report, aggregates

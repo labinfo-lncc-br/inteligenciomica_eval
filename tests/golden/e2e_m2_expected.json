@@ -1,0 +1,54 @@
+{
+  "description": "Golden do E2E M2 (TAREFA-028, parte b). 2 perguntas PT-BR x 2 LLMs x 1 seed = 4 respostas normais + 1 resposta extra (q03_nan, apenas em llm-alpha) com NaN forcado via falha total de I/O 3x (APIConnectionError → MetricComputationError → NaN-sentinel). Pipeline real: ComputeMetricsUseCase + RetryableMetric* + RAGASLayer1Adapter (real, _metrics injetado) + PrometheusRubricJudgeAdapter (real, _client mockado SDK) + DeterministicMetricsAdapter (BERTScore real CPU) + ParquetStorage (tmp_path) + AggregationService + RankScoreCalculator. Mock no nivel SDK substitui respx (regra §11/memoria + FAIL TAREFA-024).",
+  "run_id": "run-m2-e2e",
+  "round_id": "round_m2_e2e",
+  "phase": "A",
+  "base": "IDx_400k",
+  "seed": 42,
+  "failure_threshold": 0.70,
+  "llms": ["llm-alpha", "llm-beta"],
+  "nan_question_id": "q03_nan",
+  "nan_config_llm": "llm-alpha",
+  "total_rows": 5,
+  "questions": [
+    {"id": "q01", "text": "Qual o mecanismo de acao das estatinas?", "ground_truth": "As estatinas inibem a enzima HMG-CoA redutase, reduzindo a sintese hepatica de colesterol.", "generated": "As estatinas atuam inibindo a HMG-CoA redutase, o que diminui a producao de colesterol no figado."},
+    {"id": "q02", "text": "Como a metformina reduz a glicemia?", "ground_truth": "A metformina reduz a producao hepatica de glicose e aumenta a sensibilidade a insulina.", "generated": "A metformina diminui a gliconeogenese hepatica e melhora a sensibilidade a insulina."},
+    {"id": "q03_nan", "text": "Qual o papel da proteina p53 na supressao tumoral?", "ground_truth": "A p53 regula o ciclo celular e induz apoptose em resposta a danos no DNA.", "generated": "A p53 controla o ciclo celular e aciona apoptose diante de lesoes no DNA."}
+  ],
+  "layer1_normal": {
+    "answer_correctness": 0.80,
+    "answer_similarity": 0.75,
+    "faithfulness": 0.90,
+    "context_precision": 0.85,
+    "context_recall": 0.70,
+    "answer_relevancy": 0.88
+  },
+  "rubric_normal_raw": 4,
+  "rubric_normal_normalized": 0.75,
+  "normal_final_score": 0.809,
+  "final_score_computation": "0.45*0.80 + 0.20*0.90 + 0.15*0.75 + 0.10*0.70 + 0.05*0.85 + 0.05*0.88 = 0.360 + 0.180 + 0.1125 + 0.070 + 0.0425 + 0.044 = 0.809",
+  "metric_score_columns": [
+    "answer_correctness", "answer_similarity", "faithfulness", "context_precision",
+    "context_recall", "answer_relevancy", "bertscore_f1", "rubric_biomed_score"
+  ],
+  "expected_report": {"n_processed": 4, "n_skipped": 0, "n_nan_excluded": 1, "n_failed_terminal": 0},
+  "expected_report_rerun": {"n_processed": 0, "n_skipped": 4, "n_nan_excluded": 1, "n_failed_terminal": 0, "note": "linhas finitas (4) puladas por idempotencia ADR-009; a linha NaN-sentinel (q03_nan) e reprocessada deterministicamente (mesmo precedente do E2E M0 / TAREFA-012). A spec textual diz n_skipped==5, mas linhas com final_score NaN sao 'incompletas' e reprocessadas por design (compute_metrics_use_case docstring)."},
+  "configs": [
+    {
+      "base": "IDx_400k", "llm": "llm-alpha",
+      "n_observations": 2, "n_excluded_nan": 1,
+      "mean_score": 0.809, "median_score": 0.809, "min_score": 0.809, "iqr": 0.0,
+      "failure_rate": 0.0, "critical_failure_rate": 0.0,
+      "win_rate": 0.3333333333333333, "rank_score": 0.6545
+    },
+    {
+      "base": "IDx_400k", "llm": "llm-beta",
+      "n_observations": 2, "n_excluded_nan": 0,
+      "mean_score": 0.809, "median_score": 0.809, "min_score": 0.809, "iqr": 0.0,
+      "failure_rate": 0.0, "critical_failure_rate": 0.0,
+      "win_rate": 0.3333333333333333, "rank_score": 0.6545
+    }
+  ],
+  "win_rate_computation": "all_qids={q01,q02,q03_nan} → n_questions=3. q01: empate alpha/beta (0.809) → 0.5 cada; q02: empate → 0.5 cada; q03_nan: alpha tem NaN (excluido), beta nao tem a pergunta → sem vencedor. wins(alpha)=wins(beta)=1.0 → win_rate=1.0/3=0.3333...",
+  "rank_score_computation": "RankScore = 0.50*median + 0.20*(1-failure_rate) + 0.15*win_rate - 0.15*critical_failure_rate = 0.50*0.809 + 0.20*1.0 + 0.15*(1/3) - 0.15*0.0 = 0.4045 + 0.20 + 0.05 - 0.0 = 0.6545 (identico para os dois configs)"
+}

@@ -326,9 +326,7 @@ class TestLoggingBranches:
             report = await uc.execute(ComputeMetricsInput(run_id="r", round_id="rd"))
 
         assert report.n_failed_terminal == 1
-        assert any(
-            e.get("event") == "compute_metrics_high_failure_rate" for e in logs
-        )
+        assert any(e.get("event") == "compute_metrics_high_failure_rate" for e in logs)
 
 
 # ---------------------------------------------------------------------------
