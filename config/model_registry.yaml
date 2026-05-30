@@ -122,6 +122,9 @@ models:
     gpu_index: 3                 # FIXA — GPU dedicada ao juiz (ADR-012)
     is_judge: true
     batch_invariant: true
-    extra_args:
-      VLLM_BATCH_INVARIANT: "1"
-      VLLM_ENABLE_V1_MULTIPROCESSING: "0"
+    # extra_args = flags de CLI do vLLM (TAREFA-302). As env vars de regime
+    # (VLLM_BATCH_INVARIANT/VLLM_ENABLE_V1_MULTIPROCESSING) NÃO vão aqui: o
+    # VLLMServerManagerAdapter as INJETA no ambiente do subprocesso a partir de
+    # batch_invariant=true (ADR-003). Pô-las em extra_args geraria `--VLLM_... valor`
+    # (flag de CLI inválida). Vazio até haver flag de CLI real do juiz.
+    extra_args: {}

@@ -266,18 +266,41 @@ class StorageError(InteligenciomicaEvalError):
 class ServerStartTimeoutError(InteligenciomicaEvalError):
     """Servidor de modelo não iniciou dentro do prazo máximo de espera.
 
+    O contexto de diagnóstico (``pid``, ``reason`` e o ``stderr_tail`` do processo) é
+    carregado na própria exceção, não apenas logado — quem captura (orquestrador,
+    TAREFA-307) tem acesso programático à causa-raiz sem reparsear logs.
+
     Args:
         server_name: identificação do servidor (ex: nome ou endereço).
         timeout_seconds: limite de tempo aguardado em segundos.
+        pid: PID do processo que falhou (quando conhecido).
+        reason: causa estruturada (ex.: ``"timeout"`` ou ``"process_exited"``).
+        stderr_tail: últimas linhas de ``stderr`` do processo (diagnóstico).
     """
 
-    def __init__(self, server_name: str, timeout_seconds: float) -> None:
-        super().__init__(
-            f"Server {server_name!r} did not start within {timeout_seconds}s. "
-            "Check server logs and resource availability."
-        )
+    def __init__(
+        self,
+        server_name: str,
+        timeout_seconds: float,
+        *,
+        pid: int | None = None,
+        reason: str | None = None,
+        stderr_tail: str | None = None,
+    ) -> None:
+        message = f"Server {server_name!r} did not start within {timeout_seconds}s"
+        if pid is not None:
+            message += f" (pid={pid})"
+        if reason:
+            message += f"; reason={reason}"
+        message += ". Check server logs and resource availability."
+        if stderr_tail:
+            message += f"\n--- stderr tail ---\n{stderr_tail}"
+        super().__init__(message)
         self.server_name = server_name
         self.timeout_seconds = timeout_seconds
+        self.pid = pid
+        self.reason = reason
+        self.stderr_tail = stderr_tail
 
 
 class ModelSwitchError(InteligenciomicaEvalError):

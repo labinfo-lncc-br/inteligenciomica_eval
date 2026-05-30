@@ -533,7 +533,9 @@ def _gen_spec() -> ModelSpec:
         quantization=None,
         tensor_parallel_size=1,
         max_model_len=8192,
-        extra_env={},
+        gpu_index=0,
+        batch_invariant=False,
+        extra_args={},
     )
 
 
@@ -545,7 +547,9 @@ class TestFakeVLLMServerManager:
             quantization=None,
             tensor_parallel_size=1,
             max_model_len=8192,
-            extra_env={},
+            gpu_index=0,
+            batch_invariant=False,
+            extra_args={},
         )
         mgr = FakeVLLMServerManager()
         handle = await mgr.start(spec)
@@ -560,7 +564,9 @@ class TestFakeVLLMServerManager:
             quantization=None,
             tensor_parallel_size=1,
             max_model_len=4096,
-            extra_env={"VLLM_BATCH_INVARIANT": "1"},
+            gpu_index=3,
+            batch_invariant=True,
+            extra_args={},
         )
         mgr = FakeVLLMServerManager()
         handle = await mgr.start(spec)

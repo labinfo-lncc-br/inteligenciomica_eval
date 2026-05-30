@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 
 from inteligenciomica_eval.domain.ports import ModelSpec, ServerHandle
 
 _PID_START = 9000
+_started_at = itertools.count(1.0)
 
 
 @dataclass
@@ -70,14 +72,17 @@ class FakeVLLMServerManager:
 
         Returns:
             ServerHandle with a synthetic PID, localhost URL and the
-            batch_invariant flag derived from ``model.extra_env``.
+            batch_invariant flag taken from ``model.batch_invariant``.
         """
         port = self._base_port + len(self.start_calls)
         handle = ServerHandle(
             pid=self._next_pid,
             url=f"http://localhost:{port}/v1",
             model=model.model,
-            batch_invariant="VLLM_BATCH_INVARIANT" in model.extra_env,
+            batch_invariant=model.batch_invariant,
+            port=port,
+            gpu_index=model.gpu_index,
+            started_at=next(_started_at),
         )
         self._next_pid += 1
         self.start_calls.append(StartCall(model=model, handle=handle))

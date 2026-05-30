@@ -219,7 +219,10 @@ class _StubVLLMServerManager:
             pid=1234,
             url=f"http://localhost:{model.port}/v1",
             model=model.model,
-            batch_invariant="VLLM_BATCH_INVARIANT" in model.extra_env,
+            batch_invariant=model.batch_invariant,
+            port=model.port,
+            gpu_index=model.gpu_index,
+            started_at=0.0,
         )
 
     async def wait_healthy(self, handle: ServerHandle, timeout_s: int) -> None:
@@ -404,11 +407,14 @@ class TestDTOInstantiation:
             quantization=None,
             tensor_parallel_size=1,
             max_model_len=4096,
-            extra_env={"VLLM_BATCH_INVARIANT": "1"},
+            gpu_index=3,
+            batch_invariant=True,
+            extra_args={},
         )
         assert spec.tensor_parallel_size == 1
         assert spec.max_model_len == 4096
-        assert "VLLM_BATCH_INVARIANT" in spec.extra_env
+        assert spec.gpu_index == 3
+        assert spec.batch_invariant is True
 
     def test_server_handle(self) -> None:
         h = ServerHandle(
@@ -416,10 +422,16 @@ class TestDTOInstantiation:
             url="http://localhost:8001/v1",
             model="prometheus-8x7b-v2.0",
             batch_invariant=True,
+            port=8001,
+            gpu_index=3,
+            started_at=1700000000.0,
         )
         assert h.pid == 4321
         assert h.url == "http://localhost:8001/v1"
         assert h.batch_invariant is True
+        assert h.port == 8001
+        assert h.gpu_index == 3
+        assert h.started_at == pytest.approx(1700000000.0)
 
     def test_result_frame(self) -> None:
         frame = _make_result_frame()
@@ -491,11 +503,14 @@ class TestStubBehavior:
             quantization=None,
             tensor_parallel_size=1,
             max_model_len=8192,
-            extra_env={},
+            gpu_index=0,
+            batch_invariant=False,
+            extra_args={},
         )
         handle = await manager.start(spec)
         assert isinstance(handle, ServerHandle)
         assert handle.model == "llama3-8b"
         assert handle.batch_invariant is False
+        assert handle.gpu_index == 0
         await manager.wait_healthy(handle, timeout_s=60)
         await manager.stop(handle)

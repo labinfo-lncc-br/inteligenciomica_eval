@@ -225,9 +225,14 @@ class CriticalAnnotation:
 class ModelSpec:
     """Especificação de modelo para instanciação no vLLM (ADR-004/ADR-012, §9.3).
 
-    A presença de ``"VLLM_BATCH_INVARIANT"`` em :attr:`extra_env` distingue o juiz
-    determinístico (regime BATCH_INVARIANT, ADR-003) dos geradores (§9.2.4) — é a
-    decisão arquitetural central de §9.2 e deve ficar visível no ``extra_env``.
+    O regime determinístico do juiz (BATCH_INVARIANT, ADR-003) vs. geradores
+    (§9.2.4) é decidido pela **flag** :attr:`batch_invariant` — o
+    ``VLLMServerManagerAdapter`` INJETA ``VLLM_BATCH_INVARIANT=1`` /
+    ``VLLM_ENABLE_V1_MULTIPROCESSING=0`` no ambiente do subprocesso *sse*
+    ``batch_invariant`` for ``True`` (TAREFA-302). A flag — e não dados de ambiente —
+    é a fonte autoritativa do regime: geradores ficam *provadamente* sem essas
+    variáveis. ``extra_args`` carrega **flags de CLI** adicionais do vLLM (nunca
+    variáveis de ambiente de regime).
 
     Args:
         model: identificador HuggingFace ou caminho local do modelo.
@@ -235,9 +240,13 @@ class ModelSpec:
         quantization: esquema de quantização (ex.: ``"awq"``) ou ``None`` para fp16.
         tensor_parallel_size: número de GPUs para tensor parallelism (>= 1).
         max_model_len: comprimento máximo de contexto do modelo, em tokens.
-        extra_env: variáveis de ambiente extras para o processo vLLM. Para o juiz:
-            ``{"VLLM_BATCH_INVARIANT": "1", "VLLM_ENABLE_V1_MULTIPROCESSING": "0"}``;
-            para geradores: ``{}`` (sem BATCH_INVARIANT — §9.2.4).
+        gpu_index: GPU dedicada ao servidor (ADR-012). O adapter injeta
+            ``CUDA_VISIBLE_DEVICES=str(gpu_index)`` no subprocesso (juiz=3;
+            geradores=0/1/2).
+        batch_invariant: ``True`` apenas para o juiz determinístico (ADR-003) —
+            dirige a injeção das variáveis de regime pelo adapter.
+        extra_args: flags de CLI adicionais do vLLM (mapa nome→valor), apendadas ao
+            comando como ``--nome valor``. NÃO contém variáveis de ambiente.
     """
 
     model: str
@@ -245,7 +254,9 @@ class ModelSpec:
     quantization: str | None
     tensor_parallel_size: int
     max_model_len: int
-    extra_env: dict[str, str]
+    gpu_index: int
+    batch_invariant: bool
+    extra_args: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,15 +267,21 @@ class ServerHandle:
         pid: PID do processo vLLM.
         url: URL base do endpoint OpenAI-compatible, com sufixo ``/v1``
             (ex.: ``"http://localhost:8000/v1"``).
-        model: identificador do modelo carregado no servidor.
+        model: identificador (nome) do modelo carregado no servidor.
         batch_invariant: ``True`` se o servidor roda no regime BATCH_INVARIANT
             (juiz determinístico, ADR-003); ``False`` para geradores (§9.2.4).
+        port: porta TCP onde o servidor expõe a API (compõe :attr:`url`).
+        gpu_index: GPU dedicada ao servidor (ADR-012; via ``CUDA_VISIBLE_DEVICES``).
+        started_at: instante de início (epoch seconds) para auditoria de ciclo de vida.
     """
 
     pid: int
     url: str
     model: str
     batch_invariant: bool
+    port: int
+    gpu_index: int
+    started_at: float
 
 
 @dataclass(frozen=True, slots=True)

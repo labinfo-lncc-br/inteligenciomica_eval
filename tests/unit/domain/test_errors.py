@@ -189,6 +189,29 @@ def test_server_start_timeout_stores_name_and_timeout() -> None:
     err = ServerStartTimeoutError("ollama", 60.0)
     assert err.server_name == "ollama"
     assert err.timeout_seconds == pytest.approx(60.0)
+    # defaults: contexto opcional ausente
+    assert err.pid is None
+    assert err.reason is None
+    assert err.stderr_tail is None
+
+
+@pytest.mark.unit
+def test_server_start_timeout_carries_diagnostic_context() -> None:
+    """Contexto (pid/reason/stderr_tail) fica na exceção e na mensagem (TAREFA-302-B)."""
+    err = ServerStartTimeoutError(
+        "prometheus-8x7b",
+        180.0,
+        pid=4321,
+        reason="process_exited",
+        stderr_tail="CUDA out of memory",
+    )
+    assert err.pid == 4321
+    assert err.reason == "process_exited"
+    assert err.stderr_tail == "CUDA out of memory"
+    msg = str(err)
+    assert "pid=4321" in msg
+    assert "process_exited" in msg
+    assert "CUDA out of memory" in msg
 
 
 @pytest.mark.unit
