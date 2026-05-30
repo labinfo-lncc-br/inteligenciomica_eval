@@ -11,7 +11,7 @@ from inteligenciomica_eval.domain.errors import (
     ConfigValidationError,
     ModelNotInRegistryError,
 )
-from inteligenciomica_eval.domain.value_objects import LLMId
+from inteligenciomica_eval.domain.value_objects import LLMId, ModelWaveSpec
 
 
 class ModelEntry(BaseModel):
@@ -174,6 +174,30 @@ def get_model(registry: ModelRegistryConfig, llm_id: LLMId) -> ModelEntry:
         if model.name == llm_id.value:
             return model
     raise ModelNotInRegistryError(llm_id.value)
+
+
+def to_wave_spec(entry: ModelEntry) -> ModelWaveSpec:
+    """Extrai o VO de domínio :class:`ModelWaveSpec` de um :class:`ModelEntry` (infra).
+
+    Ponto canônico de extração (Nota M3 item 5) — usado pelo CLI ``--dry-run`` (TAREFA-303)
+    e pelo wiring (TAREFA-309) para alimentar o ``WaveSchedulerService`` (application) sem
+    expor tipos de infraestrutura à camada de aplicação.
+
+    Args:
+        entry: entrada de modelo do registry.
+
+    Returns:
+        :class:`ModelWaveSpec` com os campos de serving/GPU relevantes ao scheduler.
+    """
+    return ModelWaveSpec(
+        name=entry.name,
+        vram_gb_awq=entry.vram_gb_awq,
+        is_judge=entry.is_judge,
+        tensor_parallel_size=entry.tensor_parallel_size,
+        quantization=entry.quantization,
+        gpu_index=entry.gpu_index,
+        extra_args=dict(entry.extra_args),
+    )
 
 
 def load_model_registry(path: Path) -> ModelRegistryConfig:
