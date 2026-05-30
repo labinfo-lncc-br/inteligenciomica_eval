@@ -641,3 +641,25 @@ class VLLMServerManagerPort(Protocol):
             handle: handle do servidor a parar.
         """
         ...
+
+
+@runtime_checkable
+class GeneratorFactory(Protocol):
+    """Factory para criar GeneratorPort apontando para URL de servidor vLLM.
+
+    Declarado em ``domain/ports.py`` conforme Nota M3 item 5 — única localização
+    autorizada para este Protocol. O wiring (TAREFA-309) fornece a implementação
+    concreta que instancia o adapter real (ex.: ``VLLMGeneratorAdapter``).
+    """
+
+    def __call__(self, url: str) -> GeneratorPort:
+        """Cria um GeneratorPort configurado para o servidor na URL fornecida.
+
+        Args:
+            url: URL base do endpoint OpenAI-compatible do servidor vLLM
+                (com sufixo ``/v1``, ex.: ``"http://localhost:8000/v1"``).
+
+        Returns:
+            :class:`GeneratorPort` apontando para o servidor na URL.
+        """
+        ...
