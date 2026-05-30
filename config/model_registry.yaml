@@ -1,0 +1,127 @@
+# Model registry + GPU layout — InteligenciÔmica Eval (§7.2, §15, ADR-012)
+#
+# Arquivo SEPARADO do experiment_round1.yaml (§8/§12.1): o YAML de rodada
+# referencia este path via `model_registry_path`, nunca embute o registry.
+#
+# ADR-003 — regimes determinísticos:
+#   * juiz (is_judge: true): batch_invariant: true, tensor_parallel_size: 1
+#   * geradores (is_judge: false): batch_invariant: false (produção realista)
+# ADR-012 — alocação de GPUs (GH200, 4x): juiz na GPU 3 (FIXA); geradores nas
+#   GPUs 0/1/2 em ondas concorrentes (onda 1: 3 modelos; onda 2: 2 modelos). O
+#   `gpu_index` dos geradores aqui é NOMINAL: o orquestrador (TAREFA-303/309)
+#   reatribui dinamicamente 0/1/2 por onda (doc §15.3 l.1153: "só o juiz tem GPU
+#   fixa"). Apenas o juiz (gpu_index=3) é vinculante.
+#
+# Sem segredos (ADR-008): endpoints/credenciais vêm de variáveis de ambiente.
+#
+# Roster canônico (doc §15.3 l.826): geradores
+#   [gpt-oss-120b, gemma4:31b, qwen3.6:35b, glm-4.7-flash, llama4:16x17b]
+#   + juiz prometheus-eval/prometheus-8x7b-v2.0 (doc l.835/1143).
+#
+# -----------------------------------------------------------------------------
+# VALORES PENDENTE (NÃO são medições — não fabricar):
+#   A Premissa P1.1 do doc (footprint por modelo na quantização de produção) está
+#   ABERTA no checklist (§17.3 l.1400). O registry-exemplo do §15.3 NÃO tem campo
+#   de VRAM e deixa `model_path`/`quantization` dos geradores como `<...>` /
+#   `<conforme-produção>`. Portanto, para os GERADORES:
+#     - vram_gb_fp16 / vram_gb_awq : SENTINELAS conservadoras (valor uniforme),
+#       escolhidas apenas para (a) satisfazer o tipo `gt=0` e (b) honrar o
+#       invariante de design "cabe em 1 GPU" (vram_gb_awq <= available_gb=88).
+#       MEDIR no M0 (P1.1) e substituir.
+#     - quantization : "awq" (esquema-alvo; confirmar na bancada — ADR-003 manda
+#       NÃO alterar params de produção).
+#     - hf_repo : "PENDENTE" (doc usa `<...>`), exceto llama4:16x17b, cujo repo
+#       é dado explicitamente pelo Prompt A da TAREFA-301.
+#   O JUIZ usa valores REAIS do doc: prometheus-eval/prometheus-8x7b-v2.0, AWQ,
+#   ~26 GB (§15 l.548), tp=1, GPU 3, VLLM_BATCH_INVARIANT=1. Seu `vram_gb_fp16`
+#   (referência teórica, não validada e ausente do doc) é sentinela PENDENTE.
+# -----------------------------------------------------------------------------
+
+gpu_slots:
+  # GH200: doc P1 (l.86) = ~96-141 GB HBM por GPU. Usamos 96.0 (limite inferior
+  # conservador da faixa) para a checagem de VRAM ser a mais estrita; confirmar
+  # o SKU exato do nó na operacionalização. available_gb = 96 - 8 = 88.
+  - gpu_index: 0
+    vram_gb: 96.0
+    reserved_gb: 8.0
+  - gpu_index: 1
+    vram_gb: 96.0
+    reserved_gb: 8.0
+  - gpu_index: 2
+    vram_gb: 96.0
+    reserved_gb: 8.0
+  - gpu_index: 3
+    vram_gb: 96.0
+    reserved_gb: 8.0
+
+models:
+  # --- Geradores (5) — batch_invariant: false, GPUs 0/1/2 nominais (ADR-012) ---
+  # VRAM/quantization/hf_repo = PENDENTE (ver cabeçalho). Roster: doc §15.3 l.826.
+  - name: "gpt-oss-120b"
+    hf_repo: "PENDENTE"          # doc usa `<...>` — definir no M0
+    vram_gb_fp16: 160.0          # PENDENTE-P1.1 (referência teórica, não medida)
+    vram_gb_awq: 80.0            # PENDENTE-P1.1 (sentinela: <= available_gb=88)
+    quantization: "awq"          # PENDENTE-P1.1 (confirmar na bancada)
+    tensor_parallel_size: 1      # pode virar 2 no M0 se não couber em 1 GPU (P1.1)
+    gpu_index: 0                 # nominal — onda 1
+    is_judge: false
+    batch_invariant: false
+    extra_args: {}
+
+  - name: "gemma4:31b"
+    hf_repo: "PENDENTE"          # doc usa `<...>` — definir no M0
+    vram_gb_fp16: 160.0          # PENDENTE-P1.1 (referência teórica, não medida)
+    vram_gb_awq: 80.0            # PENDENTE-P1.1 (sentinela: <= available_gb=88)
+    quantization: "awq"          # PENDENTE-P1.1 (confirmar na bancada)
+    tensor_parallel_size: 1      # pode virar 2 no M0 se não couber em 1 GPU (P1.1)
+    gpu_index: 1                 # nominal — onda 1
+    is_judge: false
+    batch_invariant: false
+    extra_args: {}
+
+  - name: "qwen3.6:35b"
+    hf_repo: "PENDENTE"          # doc usa `<...>` — definir no M0
+    vram_gb_fp16: 160.0          # PENDENTE-P1.1 (referência teórica, não medida)
+    vram_gb_awq: 80.0            # PENDENTE-P1.1 (sentinela: <= available_gb=88)
+    quantization: "awq"          # PENDENTE-P1.1 (confirmar na bancada)
+    tensor_parallel_size: 1      # pode virar 2 no M0 se não couber em 1 GPU (P1.1)
+    gpu_index: 2                 # nominal — onda 1
+    is_judge: false
+    batch_invariant: false
+    extra_args: {}
+
+  - name: "glm-4.7-flash"
+    hf_repo: "PENDENTE"          # doc usa `<...>` — definir no M0
+    vram_gb_fp16: 160.0          # PENDENTE-P1.1 (referência teórica, não medida)
+    vram_gb_awq: 80.0            # PENDENTE-P1.1 (sentinela: <= available_gb=88)
+    quantization: "awq"          # PENDENTE-P1.1 (confirmar na bancada)
+    tensor_parallel_size: 1      # pode virar 2 no M0 se não couber em 1 GPU (P1.1)
+    gpu_index: 0                 # nominal — onda 2
+    is_judge: false
+    batch_invariant: false
+    extra_args: {}
+
+  - name: "llama4:16x17b"
+    hf_repo: "meta-llama/Llama-4-Scout-17B-16E-Instruct"   # Prompt A TAREFA-301
+    vram_gb_fp16: 160.0          # PENDENTE-P1.1 (referência teórica, não medida)
+    vram_gb_awq: 80.0            # PENDENTE-P1.1 (sentinela: <= available_gb=88)
+    quantization: "awq"          # PENDENTE-P1.1 (confirmar na bancada)
+    tensor_parallel_size: 1      # candidato a TP=2 no M0 (MoE 16x17B — P1.1)
+    gpu_index: 1                 # nominal — onda 2
+    is_judge: false
+    batch_invariant: false
+    extra_args: {}
+
+  # --- Juiz (1) — Prometheus-2 8x7B, batch_invariant: true, GPU 3 (ADR-003/012) ---
+  - name: "prometheus-8x7b-v2.0"
+    hf_repo: "prometheus-eval/prometheus-8x7b-v2.0"        # doc §15.3 l.1143 (REAL)
+    vram_gb_fp16: 160.0          # PENDENTE (referência teórica; ausente do doc)
+    vram_gb_awq: 26.0            # doc §15 l.548 (~26 GB AWQ) — valor REAL
+    quantization: "awq"          # doc §15.3 l.1144 (REAL)
+    tensor_parallel_size: 1      # OBRIGATÓRIO (batch invariance) — ADR-003
+    gpu_index: 3                 # FIXA — GPU dedicada ao juiz (ADR-012)
+    is_judge: true
+    batch_invariant: true
+    extra_args:
+      VLLM_BATCH_INVARIANT: "1"
+      VLLM_ENABLE_V1_MULTIPROCESSING: "0"

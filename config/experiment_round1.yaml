@@ -3,6 +3,10 @@
 
 round_id: "round-1"
 
+# Registry de modelos + layout de GPUs (§8/§12.1) — arquivo SEPARADO.
+# Path relativo a este YAML de rodada; carregado à parte pelo DIContainer (TAREFA-309).
+model_registry_path: "model_registry.yaml"
+
 phases:
   - "A"
   - "B"
@@ -12,8 +16,13 @@ bases:
   - "ID_230K"
 
 llms:
-  - "meta-llama/Llama-3.1-8B-Instruct"
-  - "meta-llama/Llama-3.1-70B-Instruct"
+  # Roster canônico da Rodada 1 (doc §15.3 l.826); deve casar com os `name` de
+  # config/model_registry.yaml e com os LLMId de domínio.
+  - "gpt-oss-120b"
+  - "gemma4:31b"
+  - "qwen3.6:35b"
+  - "glm-4.7-flash"
+  - "llama4:16x17b"
 
 seeds:
   - 42
@@ -25,11 +34,16 @@ temperature: 0.0
 retrieval:
   top_k: 5
   reranker: null
-  embedding_model: "<a-definir>"     # placeholder — definir em TAREFA-301
-  chunk_strategy: "<a-definir>"      # placeholder — definir em TAREFA-301
+  # PENDENTE: baseline de retrieval da Rodada 1. O doc deixa estes como
+  # `<baseline-a-definir>` (§15 l.832-833); a variação de chunk/embedding é a
+  # Rodada 2 (TAREFA-505/506). Definir o baseline de produção na operacionalização.
+  embedding_model: "PENDENTE-rodada1"
+  chunk_strategy: "PENDENTE-rodada1"
 
 judge:
-  model: "meta-llama/Llama-3.1-70B-Instruct"
+  # Prometheus-2 8x7B (doc §15.3 l.835/1143). `model` = nome lógico (casa com o
+  # `name` do registry); o hf_repo completo vive em model_registry.yaml.
+  model: "prometheus-8x7b-v2.0"
   endpoint_env: "VLLM_JUDGE_URL"     # nome da env var; valor resolvido em runtime
   batch_invariant: true              # ADR-003: juiz DEVE ser determinístico
   temperature: 0.0

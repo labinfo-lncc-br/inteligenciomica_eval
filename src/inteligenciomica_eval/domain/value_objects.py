@@ -239,3 +239,32 @@ class RowId:
         payload = "|".join([run_id, phase, base, llm, str(seed), question_id])
         digest = hashlib.sha256(payload.encode()).hexdigest()
         return cls(value=digest)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelWaveSpec:
+    """Especificação de serving/GPU de um modelo para a camada de aplicação.
+
+    VO de domínio puro (Nota de operacionalização M3 item 5, TAREFA-301).
+    Abstrai os dados de GPU do ``ModelEntry`` de infraestrutura para que o
+    ``WaveSchedulerService`` (application, TAREFA-303) planeje as ondas sem
+    importar de ``infrastructure`` (ADR-001). Construído pelo wiring (TAREFA-309)
+    a partir de cada ``ModelEntry``.
+
+    Args:
+        name: identificador do modelo (deve bater com ``LLMId``/round config).
+        vram_gb_awq: VRAM de produção (AWQ 4-bit ou regime real), em gigabytes.
+        is_judge: ``True`` apenas para o juiz determinístico (Prometheus-2).
+        tensor_parallel_size: número de GPUs para tensor parallelism (>= 1).
+        quantization: esquema de quantização (ex.: ``"awq"``, ``"bfloat16"``).
+        gpu_index: GPU dedicada (ADR-012: juiz=3; geradores=0,1,2).
+        extra_args: flags vLLM adicionais (mapa nome→valor).
+    """
+
+    name: str
+    vram_gb_awq: float
+    is_judge: bool
+    tensor_parallel_size: int
+    quantization: str
+    gpu_index: int
+    extra_args: dict[str, str]

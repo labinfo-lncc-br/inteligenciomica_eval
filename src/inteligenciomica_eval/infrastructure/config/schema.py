@@ -116,6 +116,11 @@ class RoundConfig(BaseModel):
     """
 
     round_id: str
+    # Path (relativo ao YAML de rodada) para config/model_registry.yaml — §8/§12.1.
+    # Referência ao registry, NUNCA o ModelRegistryConfig embutido (TAREFA-301).
+    # Default preserva compatibilidade com rodadas/fixtures existentes; o
+    # experiment_round1.yaml o define explicitamente.
+    model_registry_path: str = "model_registry.yaml"
     phases: list[str]
     bases: list[str]
     llms: list[str]
