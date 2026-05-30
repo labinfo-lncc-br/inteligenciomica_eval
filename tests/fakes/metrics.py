@@ -64,6 +64,17 @@ class FakeMetricSuite:
         """
         return _NAN_LAYER1 if self._inject_nan else self._fixed
 
+    async def score_batch(self, samples: list[EvaluationSample]) -> list[Layer1Metrics]:
+        """Return Layer1Metrics for each sample in the batch.
+
+        Args:
+            samples: evaluation samples (content unused).
+
+        Returns:
+            List of Layer1Metrics, one per sample.
+        """
+        return [_NAN_LAYER1 if self._inject_nan else self._fixed for _ in samples]
+
 
 class FakeRubricJudge:
     """In-memory RubricJudgePort returning a fixed or NaN-score RubricResult.

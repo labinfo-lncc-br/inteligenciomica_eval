@@ -293,3 +293,24 @@ class RAGASLayer1Adapter:
             context_recall=scores["context_recall"],
             answer_relevancy=scores["answer_relevancy"],
         )
+
+    async def score_batch(self, samples: list[EvaluationSample]) -> list[Layer1Metrics]:
+        """Avalia um lote de amostras sequencialmente via :meth:`score`.
+
+        Implementação sequencial — conforme ADR-003 (concorrência máxima 1
+        para o juiz determinístico). A interface batch permite que o use case
+        (TAREFA-305) processe lotes sem N chamadas diretas a ``score``.
+
+        Args:
+            samples: lista de amostras a avaliar.
+
+        Returns:
+            Lista de :class:`Layer1Metrics`, uma por amostra.
+
+        Raises:
+            MetricComputationError: propagada de :meth:`score` em falha de I/O.
+        """
+        results = []
+        for sample in samples:
+            results.append(await self.score(sample))
+        return results

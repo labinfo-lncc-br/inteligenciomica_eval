@@ -159,6 +159,9 @@ class _StubMetricSuite:
             answer_relevancy=0.88,
         )
 
+    async def score_batch(self, samples: list[EvaluationSample]) -> list[Layer1Metrics]:
+        return [await self.score(s) for s in samples]
+
 
 class _StubRubricJudge:
     async def score(self, sample: EvaluationSample) -> RubricResult:

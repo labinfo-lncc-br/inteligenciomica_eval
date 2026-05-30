@@ -151,6 +151,24 @@ class RetryableMetricSuiteAdapter:
             question_id=sample.question_id,
         )
 
+    async def score_batch(self, samples: list[EvaluationSample]) -> list[Layer1Metrics]:
+        """Avalia um lote delegando ao adapter interno (sem retry adicional).
+
+        O retry de batch é responsabilidade do caller (ex.: ``RunMetricsPassUseCase.
+        _process_batch``). Este método satisfaz a interface :class:`MetricSuitePort`
+        (Nota M3 item 5) e garante ``isinstance(adapter, MetricSuitePort) == True``.
+
+        Args:
+            samples: lista de amostras a avaliar.
+
+        Returns:
+            Lista de :class:`Layer1Metrics` do adapter interno.
+
+        Raises:
+            MetricComputationError: propagada do adapter interno em falha de I/O.
+        """
+        return await self._wrapped.score_batch(samples)
+
 
 class RetryableRubricJudgeAdapter:
     """Decora um :class:`RubricJudgePort` com retry async + NaN-sentinel (ADR-007).

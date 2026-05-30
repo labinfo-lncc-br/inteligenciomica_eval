@@ -382,6 +382,26 @@ class MetricSuitePort(Protocol):
         """
         ...
 
+    async def score_batch(self, samples: list[EvaluationSample]) -> list[Layer1Metrics]:
+        """Avalia um lote de amostras e retorna as métricas RAGAS de cada uma.
+
+        Extensão declarada na Nota M3 item 5 — permite que adapters RAGAS
+        processem lotes mais eficientemente. A implementação sequencial padrão
+        chama :meth:`score` para cada amostra; adapters concretos podem
+        paralelizar quando o servidor juiz suportar concorrência > 1.
+
+        Args:
+            samples: lista de amostras a avaliar.
+
+        Returns:
+            Lista de :class:`Layer1Metrics`, uma por amostra (mesma ordem).
+            Campos individuais podem ser ``float('nan')`` (ADR-007).
+
+        Raises:
+            MetricComputationError: falha total de I/O no adapter interno.
+        """
+        ...
+
 
 @runtime_checkable
 class RubricJudgePort(Protocol):
