@@ -70,11 +70,15 @@ class AnnotationSummary:
         n_skipped: número de itens pulados pelo usuário na sessão interativa.
         n_pending: número de itens na fila que não foram processados (por ex.,
             porque o usuário saiu antes de concluir).
+        n_errors: número de linhas que falharam no processamento em lote
+            (``StorageError``, ``ScoreOutOfRangeError`` ou ``ValueError``).
+            Sempre 0 na sessão interativa; preenchido por ``batch_annotate_from_csv``.
     """
 
     n_annotated: int
     n_skipped: int
     n_pending: int
+    n_errors: int = 0
 
 
 class AnnotationWorkflowUseCase:
@@ -259,6 +263,7 @@ class AnnotationWorkflowUseCase:
             n_annotated=n_annotated,
             n_skipped=0,
             n_pending=0,
+            n_errors=n_errors,
         )
 
 

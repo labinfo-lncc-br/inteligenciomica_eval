@@ -355,6 +355,26 @@ class TestBatchAnnotateFromCSV:
         summary = uc.batch_annotate_from_csv(csv_content)
         # flag 9 → ScoreOutOfRangeError → contado como erro, não anotado
         assert summary.n_annotated == 0
+        assert summary.n_errors == 1
+
+    def test_summary_n_errors_reflects_all_failures(self) -> None:
+        """n_errors em AnnotationSummary contabiliza todas as linhas que falharam."""
+        uc, writer, _store = _make_uc()
+        r = _make_result(question_id="q01", final_score=0.1)
+        writer.append(r)  # type: ignore[arg-type]
+        row_id = r.answer.row_id  # type: ignore[union-attr]
+
+        # 1 linha válida + 2 linhas com flag inválido
+        csv_content = self._make_csv(
+            [
+                {"row_id": row_id.value, "flag": "0", "note": ""},
+                {"row_id": row_id.value, "flag": "7", "note": ""},  # inválido
+                {"row_id": "0" * 64, "flag": "0", "note": ""},  # row_id inexistente
+            ]
+        )
+        summary = uc.batch_annotate_from_csv(csv_content)
+        assert summary.n_annotated == 1
+        assert summary.n_errors == 2
 
     def test_missing_columns_raises_storage_error(self) -> None:
         """CSV sem coluna row_id ou flag levanta StorageError na abertura."""

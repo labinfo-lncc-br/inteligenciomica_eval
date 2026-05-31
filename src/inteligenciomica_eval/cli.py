@@ -328,7 +328,7 @@ def _run_batch_annotate(
 
     _console.print(
         f"\n[green]Batch annotation complete[/green] — "
-        f"{summary.n_annotated} annotated, {summary.n_pending} errors."
+        f"{summary.n_annotated} annotated, {summary.n_errors} errors."
     )
 
 
