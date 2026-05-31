@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import math
+import random
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
+import structlog
 import typer
 from rich.console import Console
 
@@ -27,6 +31,7 @@ app = typer.Typer(
 )
 _console = Console()
 _err_console = Console(stderr=True)
+_log = structlog.get_logger(__name__)
 
 
 @app.callback()
@@ -233,8 +238,43 @@ def annotate(
     ],
     run_id: Annotated[str, typer.Option("--run-id", help="Run identifier.")],
     data_dir: Annotated[
-        Path, typer.Option("--data-dir", help="Parquet storage base directory.")
-    ],
+        Path | None,
+        typer.Option("--data-dir", help="Parquet storage base directory (M3 mode)."),
+    ] = None,
+    # M4 — export / ingest flags (ADR-010, §14.7 TAREFA-401/402)
+    export_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--export",
+            help="Export prioritized responses to JSONL for offline expert review.",
+        ),
+    ] = None,
+    ingest_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--ingest",
+            help="Ingest expert-annotated JSONL back into Parquet (TAREFA-402).",
+        ),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Export responses with final_score below this threshold (or NaN).",
+        ),
+    ] = 0.70,
+    max_items: Annotated[
+        int | None,
+        typer.Option("--max-items", help="Maximum number of items to export."),
+    ] = None,
+    sort_by: Annotated[
+        str,
+        typer.Option(
+            "--sort-by",
+            help="Sort order for export: finalscore (asc), rubric (asc), random (seed=42).",
+        ),
+    ] = "finalscore",
+    # M3 — interactive / batch CSV annotation (existing)
     csv_path: Annotated[
         Path | None,
         typer.Option(
@@ -251,28 +291,72 @@ def annotate(
         float,
         typer.Option(
             "--score-threshold",
-            help="Queue items with final_score below this threshold.",
+            help="Queue items with final_score below this threshold (M3 mode).",
         ),
     ] = 0.6,
     rubric_threshold: Annotated[
         float,
         typer.Option(
             "--rubric-threshold",
-            help="Queue items with rubric_biomed_score below this threshold.",
+            help="Queue items with rubric_biomed_score below this threshold (M3 mode).",
         ),
     ] = 0.5,
 ) -> None:
-    """Manage human annotation queue for biomedical critical-failure review (Camada 3).
+    """Manage human annotation for biomedical critical-failure review (Camada 3).
 
-    Interactive mode (default): displays each item from the review queue and
-    prompts for 0 (no critical error), 1 (critical error), s (skip) or q (quit).
+    **M4 export mode** (``--export PATH``): exports prioritized responses to a
+    JSONL file that the biomedical specialist edits offline.  Responses with
+    ``final_score < threshold`` or NaN are selected and sorted by ``--sort-by``.
 
-    Non-interactive mode (``--csv path``): reads a CSV file with columns
+    **M4 ingest mode** (``--ingest PATH``): ingests the expert-annotated JSONL
+    back into Parquet — implemented in TAREFA-402.
+
+    ``--export`` and ``--ingest`` are mutually exclusive.
+
+    **M3 interactive mode** (default): displays each item from the review queue
+    and prompts for 0 (no critical error), 1 (critical error), s (skip) or q (quit).
+
+    **M3 non-interactive mode** (``--csv path``): reads a CSV file with columns
     {row_id, flag, note} and persists annotations in batch without prompts.
-
-    **Rastreabilidade M4**: implements TAREFA-401/402 of M4 (§14.7).
-    M4 should reference, not reimplement.
     """
+    # Mutual exclusivity guard (ADR-010, TAREFA-401 §6)
+    if export_path is not None and ingest_path is not None:
+        raise typer.BadParameter(
+            "Flags mutuamente exclusivas: use --export OU --ingest, não ambas.",
+            param_hint="'--export'/'--ingest'",
+        )
+
+    # ------------------------------------------------------------------ M4 export
+    if export_path is not None:
+        try:
+            _run_export_annotate(
+                config=config,
+                run_id=run_id,
+                export_path=export_path,
+                threshold=threshold,
+                max_items=max_items,
+                sort_by=sort_by,
+            )
+        except KeyboardInterrupt:
+            _log.info("export_annotate_interrupted", run_id=run_id)
+            _err_console.print("\n[yellow]Interrupted.[/yellow]")
+            raise typer.Exit(130) from None
+        return
+
+    # ------------------------------------------------------------------ M4 ingest
+    if ingest_path is not None:
+        _err_console.print(
+            "[yellow]--ingest será implementado na TAREFA-402 (M4).[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    # ------------------------------------------------------------------ M3 mode
+    if data_dir is None:
+        _err_console.print(
+            "[red]--data-dir é obrigatório no modo interativo/CSV (M3).[/red]"
+        )
+        raise typer.Exit(1)
+
     from inteligenciomica_eval.application.use_cases.annotation_workflow import (
         AnnotationConfig,
         AnnotationWorkflowUseCase,
@@ -308,6 +392,153 @@ def annotate(
         _run_batch_annotate(uc, run_id=run_id, csv_path=csv_path)
     else:
         _run_interactive_annotate(uc, run_id=run_id)
+
+
+def _run_export_annotate(
+    *,
+    config: Path,
+    run_id: str,
+    export_path: Path,
+    threshold: float,
+    max_items: int | None,
+    sort_by: str,
+) -> None:
+    """Export prioritized evaluation results to a JSONL file for offline review.
+
+    Reads all EvaluationResult for the round from Parquet via the annotation reader,
+    filters by ``final_score < threshold OR NaN``, sorts according to ``sort_by``,
+    applies ``max_items``, serialises each result as a JSON line, and writes to
+    ``export_path``.  The parent directory is created if it does not exist.
+
+    Args:
+        config: path to the round config YAML (derives round_id and data_dir).
+        run_id: run identifier (used for logging and summary display).
+        export_path: destination JSONL file path.
+        threshold: score cut-off — items below this value (or NaN) are exported.
+        max_items: maximum number of exported items; ``None`` = no limit.
+        sort_by: ordering for exported items — ``"finalscore"`` (asc, NaN first),
+            ``"rubric"`` (asc, NaN first), or ``"random"`` (seed=42).
+    """
+    from inteligenciomica_eval.domain.errors import ConfigValidationError
+    from inteligenciomica_eval.infrastructure.config.schema import load_round_config
+    from inteligenciomica_eval.infrastructure.factories import build_annotation_reader
+
+    _valid_sort_by = {"finalscore", "rubric", "random"}
+    if sort_by not in _valid_sort_by:
+        _err_console.print(
+            f"[red]--sort-by inválido:[/red] {sort_by!r}. "
+            "Escolha: finalscore | rubric | random."
+        )
+        raise typer.Exit(1)
+
+    try:
+        cfg = load_round_config(config)
+    except FileNotFoundError as exc:
+        _err_console.print(f"[red]File not found:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ConfigValidationError as exc:
+        _err_console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    from inteligenciomica_eval.domain.errors import StorageError
+
+    try:
+        reader = build_annotation_reader(config)
+        frame = reader.load(round_id=cfg.round_id, phase=None, run_id=run_id)
+    except StorageError as exc:
+        _err_console.print(f"[red]Storage error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    total = len(frame.results)
+
+    # Stratify: final_score < threshold OR NaN
+    candidates = [
+        r
+        for r in frame.results
+        if math.isnan(r.final_score.value) or r.final_score.value < threshold
+    ]
+
+    # Sort
+    if sort_by == "finalscore":
+        candidates.sort(
+            key=lambda r: (
+                (0, 0.0)
+                if math.isnan(r.final_score.value)
+                else (1, float(r.final_score.value))
+            )
+        )
+    elif sort_by == "rubric":
+        candidates.sort(
+            key=lambda r: (
+                (0, 0.0)
+                if math.isnan(r.metrics.rubric_biomed_score)
+                else (1, float(r.metrics.rubric_biomed_score))
+            )
+        )
+    else:  # random
+        rng = random.Random(42)
+        rng.shuffle(candidates)
+
+    # Apply max_items limit
+    if max_items is not None:
+        candidates = candidates[:max_items]
+
+    # Serialise to JSONL — NaN → null (JSON-compliant, §5.3 convention)
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    for r in candidates:
+        fs = r.final_score.value
+        rb = r.metrics.rubric_biomed_score
+        entry: dict[str, object] = {
+            "row_id": r.answer.row_id.value,
+            "question_id": r.answer.question.question_id,
+            "question": r.answer.question.text,
+            "generated_answer": r.answer.generated_answer,
+            "ground_truth": r.answer.question.ground_truth,
+            "final_score": None if math.isnan(fs) else round(float(fs), 6),
+            "rubric_biomed_score": None if math.isnan(rb) else round(float(rb), 6),
+            "rubric_feedback": "",
+            "critical_failure_flag": None,
+            "critical_failure_note": r.critical_failure_note or "",
+        }
+        lines.append(json.dumps(entry, ensure_ascii=False))
+
+    export_path.write_text("\n".join(lines), encoding="utf-8")
+
+    # Summary breakdown by final_score bucket (based on all results, not just exported)
+    n_below_half = sum(
+        1
+        for r in frame.results
+        if not math.isnan(r.final_score.value) and r.final_score.value < 0.5
+    )
+    n_half_to_07 = sum(
+        1
+        for r in frame.results
+        if not math.isnan(r.final_score.value) and 0.5 <= r.final_score.value < 0.7
+    )
+    n_above_07 = sum(
+        1
+        for r in frame.results
+        if not math.isnan(r.final_score.value) and r.final_score.value >= 0.7
+    )
+
+    from rich.panel import Panel
+
+    _console.print(
+        Panel(
+            f"Run:             [bold]{run_id}[/bold]\n"
+            f"Round:           [bold]{cfg.round_id}[/bold]\n"
+            f"Total no Parquet:[bold]{total}[/bold]\n"
+            f"Exportados:      [bold]{len(candidates)}[/bold]"
+            f" (threshold={threshold})\n\n"
+            f"[bold]Breakdown por final_score:[/bold]\n"
+            f"  < 0.5 :  {n_below_half}\n"
+            f"  0.5-0.7: {n_half_to_07}\n"
+            f"  ≥ 0.7 :  {n_above_07}",
+            title="annotate --export",
+        )
+    )
+    _console.print(f"[green]Exportado para:[/green] {export_path}")
 
 
 def _run_batch_annotate(

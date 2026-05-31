@@ -17,6 +17,7 @@ from inteligenciomica_eval.domain.value_objects import (
 class _StoredRow:
     result: EvaluationResult
     round_id: str
+    run_id: str = ""
 
 
 class InMemoryResultStore:
@@ -52,9 +53,11 @@ class InMemoryResultWriter:
         store: InMemoryResultStore,
         *,
         round_id: str = "round_1",
+        run_id: str = "",
     ) -> None:
         self._store = store
         self._round_id = round_id
+        self._run_id = run_id
 
     def append(self, result: EvaluationResult) -> None:
         """Persist a new evaluation row (last-write-wins, mirrors ADR-009).
@@ -65,6 +68,7 @@ class InMemoryResultWriter:
         self._store._rows[result.answer.row_id.value] = _StoredRow(
             result=result,
             round_id=self._round_id,
+            run_id=self._run_id,
         )
 
     def update_metrics(
@@ -124,12 +128,19 @@ class InMemoryResultReader:
     def __init__(self, store: InMemoryResultStore) -> None:
         self._store = store
 
-    def load(self, *, round_id: str, phase: str | None = None) -> ResultFrame:
-        """Return all results matching round_id and optional experiment phase.
+    def load(
+        self,
+        *,
+        round_id: str,
+        phase: str | None = None,
+        run_id: str | None = None,
+    ) -> ResultFrame:
+        """Return all results matching round_id and optional experiment phase / run.
 
         Args:
             round_id: round identifier to filter on.
             phase: experiment phase (``"A"`` or ``"B"``); ``None`` returns both.
+            run_id: run identifier; ``None`` returns all runs.
 
         Returns:
             ResultFrame with matching EvaluationResult objects.
@@ -139,5 +150,6 @@ class InMemoryResultReader:
             for row in self._store._rows.values()
             if row.round_id == round_id
             and (phase is None or row.result.answer.phase == phase)
+            and (run_id is None or row.run_id == run_id)
         )
         return ResultFrame(results=results)

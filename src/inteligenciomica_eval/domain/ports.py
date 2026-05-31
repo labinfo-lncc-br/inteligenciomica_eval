@@ -530,12 +530,19 @@ class ResultReaderPort(Protocol):
     Implementações concretas ficam em ``infrastructure/adapters/``.
     """
 
-    def load(self, *, round_id: str, phase: str | None = None) -> ResultFrame:
-        """Carrega resultados de uma rodada, opcionalmente filtrando por fase.
+    def load(
+        self,
+        *,
+        round_id: str,
+        phase: str | None = None,
+        run_id: str | None = None,
+    ) -> ResultFrame:
+        """Carrega resultados de uma rodada, opcionalmente filtrando por fase e run.
 
         Args:
             round_id: identificador da rodada (ex.: ``"round_1"``).
             phase: fase do experimento (``"A"`` ou ``"B"``); ``None`` carrega ambas.
+            run_id: identificador do run; ``None`` carrega todos os runs da rodada.
 
         Returns:
             :class:`ResultFrame` com todos os resultados da seleção.

@@ -551,12 +551,19 @@ class ParquetStorage:
     # ResultReaderPort
     # ------------------------------------------------------------------
 
-    def load(self, *, round_id: str, phase: str | None = None) -> ResultFrame:
-        """Load all results for a round, optionally filtered by phase.
+    def load(
+        self,
+        *,
+        round_id: str,
+        phase: str | None = None,
+        run_id: str | None = None,
+    ) -> ResultFrame:
+        """Load all results for a round, optionally filtered by phase and run.
 
         Args:
             round_id: identifier of the round to load (e.g. ``"round_1"``).
             phase: ``"A"`` or ``"B"``; ``None`` loads both phases.
+            run_id: run identifier; ``None`` loads all runs for the round.
 
         Returns:
             :class:`ResultFrame` with reconstructed :class:`EvaluationResult` objects.
@@ -564,6 +571,8 @@ class ParquetStorage:
         Raises:
             StorageError: on I/O failure.
         """
+        import pyarrow.compute as pc
+
         try:
             round_dir = self._base_dir / f"round_id={round_id}"
             if not round_dir.exists():
@@ -581,6 +590,9 @@ class ParquetStorage:
 
             tables = [pq.ParquetFile(f).read() for f in files]
             combined = pa.concat_tables(tables)
+            if run_id is not None:
+                mask = pc.equal(combined.column("run_id"), run_id)
+                combined = combined.filter(mask)
             rows_dict = combined.to_pydict()
             n = len(rows_dict["row_id"])
             results = tuple(
