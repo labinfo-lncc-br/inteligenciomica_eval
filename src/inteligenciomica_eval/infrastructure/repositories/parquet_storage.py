@@ -443,20 +443,27 @@ class ParquetStorage:
         metrics: MetricVector,
         final_score: FinalScore,
         regime: DeterminismRegime,
+        *,
+        critical_failure_flag: int | None = None,
+        critical_failure_note: str | None = None,
     ) -> None:
-        """Update metrics, final_score and regime of an existing row (§5.4).
+        """Update metrics, final_score, regime and optional annotation (§5.4).
 
         Promoted in TAREFA-026 (retroactive PR): besides the eight metric columns
         and ``metric_nan_fields``, also overwrites ``final_score`` and the derived
-        ``batch_invariant`` (§4.3: ``regime is JUDGE``). All other columns
-        (provenance, answer, flags) are left unchanged. NaN ``final_score`` (ADR-007
-        NaN-sentinel) becomes NULL on write, like the metric columns.
+        ``batch_invariant`` (§4.3: ``regime is JUDGE``). Extended in TAREFA-308:
+        optional ``critical_failure_flag`` / ``critical_failure_note`` keyword args
+        overwrite annotation columns when provided. All other columns (provenance,
+        answer) are left unchanged. NaN ``final_score`` (ADR-007 NaN-sentinel)
+        becomes NULL on write, like the metric columns.
 
         Args:
             row_id: identifier of the row to update.
             metrics: new metric values; NaN fields become NULL in Parquet.
             final_score: aggregated final score from the judging pass (NaN → NULL).
             regime: judge determinism regime — drives ``batch_invariant``.
+            critical_failure_flag: human annotation flag (0 or 1); None = no update.
+            critical_failure_note: annotation note text; None = no update.
 
         Raises:
             StorageError: if the row does not exist or on I/O failure.
@@ -488,6 +495,11 @@ class ParquetStorage:
                 # §4.3 invariant: batch_invariant ⟺ regime is JUDGE (TAREFA-022).
                 "batch_invariant": [regime is DeterminismRegime.JUDGE],
             }
+            # Annotation fields (Camada 3, ADR-010) — only overwrite when provided.
+            if critical_failure_flag is not None:
+                update_values["critical_failure_flag"] = [critical_failure_flag]
+            if critical_failure_note is not None:
+                update_values["critical_failure_note"] = [critical_failure_note]
 
             for col_name, values in update_values.items():
                 col_idx = table.schema.get_field_index(col_name)

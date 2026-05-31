@@ -109,10 +109,30 @@ class ExperimentBConfig(BaseModel):
         return v
 
 
+class AnnotationConfig(BaseModel):
+    """Configuração do fluxo de anotação humana (Camada 3, ADR-010).
+
+    Subseção de :class:`RoundConfig` (campo ``annotation``). O wiring (TAREFA-309)
+    converte para o dataclass homônimo em ``application/use_cases/annotation_workflow.py``
+    injetando também o ``round_id`` do ``RoundConfig`` pai.
+
+    Args:
+        score_threshold: limiar de ``final_score`` para priorização — respostas
+            abaixo do limiar entram na fila de revisão.
+        rubric_threshold: limiar de ``rubric_biomed_score`` para priorização.
+        max_to_review: máximo de itens na fila; ``None`` = sem limite.
+    """
+
+    score_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.6
+    rubric_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+    max_to_review: int | None = None
+
+
 class RoundConfig(BaseModel):
     """Configuração completa de uma rodada de avaliação (§12.1).
 
-    Todos os campos são obrigatórios, exceto ``experiment_b`` (None se não houver fase B).
+    Todos os campos são obrigatórios, exceto ``experiment_b`` e ``annotation``
+    (None se não houver fase B ou fluxo de anotação configurado explicitamente).
     """
 
     round_id: str
@@ -130,6 +150,7 @@ class RoundConfig(BaseModel):
     judge: JudgeConfig
     scoring: ScoringConfig
     experiment_b: ExperimentBConfig | None = None
+    annotation: AnnotationConfig | None = None
 
     @field_validator("phases")
     @classmethod

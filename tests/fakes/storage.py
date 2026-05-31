@@ -73,28 +73,34 @@ class InMemoryResultWriter:
         metrics: MetricVector,
         final_score: FinalScore,
         regime: DeterminismRegime,
+        *,
+        critical_failure_flag: int | None = None,
+        critical_failure_note: str | None = None,
     ) -> None:
-        """Update metrics, final_score and regime of an existing row (no I/O).
+        """Update metrics, final_score, regime and optional human annotation.
 
         Mirrors the evolved ``ResultWriterPort.update_metrics`` contract
-        (TAREFA-026): persists métricas, ``final_score`` e ``regime`` — o
-        ``batch_invariant`` derivado (§4.3) acompanha o regime via
-        :meth:`EvaluationResult.with_metrics`.
+        (TAREFA-026 + TAREFA-308): persists métricas, ``final_score``, ``regime``
+        e, opcionalmente, anotação humana de Camada 3 (ADR-010).
 
         Args:
             row_id: identifier of the row to update.
             metrics: new metric vector to apply.
             final_score: aggregated final score from the judging pass.
             regime: judge determinism regime.
+            critical_failure_flag: human annotation flag (0 or 1); None = no update.
+            critical_failure_note: annotation note text; None = no update.
 
         Raises:
             KeyError: if the row has not been appended yet.
         """
         stored = self._store._rows[row_id.value]
-        updated_result = stored.result.with_metrics(metrics, final_score, regime)
-        self._store._rows[row_id.value] = dataclasses.replace(
-            stored, result=updated_result
-        )
+        result = stored.result.with_metrics(metrics, final_score, regime)
+        if critical_failure_flag is not None:
+            result = result.with_human_annotation(
+                critical_failure_flag, critical_failure_note
+            )
+        self._store._rows[row_id.value] = dataclasses.replace(stored, result=result)
 
     def exists(self, row_id: RowId) -> bool:
         """Return True if the row has been appended.

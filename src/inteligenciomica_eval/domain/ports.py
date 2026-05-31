@@ -486,12 +486,17 @@ class ResultWriterPort(Protocol):
         metrics: MetricVector,
         final_score: FinalScore,
         regime: DeterminismRegime,
+        *,
+        critical_failure_flag: int | None = None,
+        critical_failure_note: str | None = None,
     ) -> None:
-        """Atualiza métricas, score final e regime de uma linha existente (§5.4).
+        """Atualiza métricas, score final, regime e, opcionalmente, anotação humana.
 
         Promovido em TAREFA-026 (PR retroativo): além das métricas, persiste o
         ``final_score`` agregado e o ``regime`` de determinismo do juiz. O
         ``batch_invariant`` derivado (§4.3: ``regime is JUDGE``) também é gravado.
+        Estendido em TAREFA-308: campos de anotação humana de Camada 3 (ADR-010)
+        adicionados como kwargs opcionais — retrocompat total com callers existentes.
         Síncrono — armazenamento é I/O local (não é adapter de rede, Nota M1 item 1).
 
         Args:
@@ -499,6 +504,10 @@ class ResultWriterPort(Protocol):
             metrics: novo vetor de métricas calculadas (NaN → NULL no Parquet).
             final_score: score final agregado da passada de julgamento.
             regime: regime de determinismo do juiz (``JUDGE`` na passada de métricas).
+            critical_failure_flag: ``0`` (sem falha), ``1`` (falha crítica), ou
+                ``None`` (não atualizar flag — padrão).
+            critical_failure_note: justificativa textual da anotação; ``None``
+                para não atualizar o campo de nota.
         """
         ...
 
