@@ -285,12 +285,17 @@ class NemenyiPair:
         llm_b: identificador do segundo LLM do par.
         p_value: p-valor do teste pós-hoc Nemenyi para este par.
         significant: ``True`` se ``p_value < alpha`` (default 0.05).
+        winner: LLM vencedor do par (média superior no bloco), populado pelo
+            ``FriedmanNemenyiAdapter`` quando ``significant=True``. ``None``
+            quando não significativo ou quando a direção não pôde ser determinada
+            (TAREFA-405 — necessário para ``top_llm_by_friedman``).
     """
 
     llm_a: str
     llm_b: str
     p_value: float
     significant: bool
+    winner: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,3 +380,49 @@ class MLMReport:
     aic: float
     n_observations: int
     convergence_warning: bool
+
+
+@dataclass(frozen=True)
+class StatsReport:
+    """Relatório consolidado de análise estatística (TAREFA-405, Nota M4 item 6).
+
+    Input principal do HTMLReportAdapter (TAREFA-408). Agrupa os resultados de
+    Wilcoxon, Friedman+Nemenyi e MLM com correção para múltiplos testes e
+    campos de síntese executiva.
+
+    Não usa ``slots=True`` para consistência com ``MLMReport`` (que contém dict).
+
+    Args:
+        run_id: identificador do run de avaliação.
+        round_id: identificador da rodada analisada.
+        wilcoxon_reports: resultados do Wilcoxon pareado por métrica testada,
+            com ``p_value_corrected`` preenchido após correção múltipla.
+        friedman_reports: resultados do Friedman+Nemenyi por métrica testada,
+            com ``p_value_corrected`` preenchido após correção múltipla.
+        mlm_reports: resultados do MLM por fórmula testada (p-values brutos —
+            não são incluídos na correção múltipla BH/Holm).
+        correction_method: método de correção aplicado (``"benjamini-hochberg"``
+            ou ``"holm"``).
+        alpha: nível de significância usado (padrão 0.05).
+        base_difference_significant: ``True`` se algum ``WilcoxonReport.significant``
+            for ``True`` após correção.
+        llm_difference_significant: ``True`` se algum ``FriedmanReport.significant``
+            for ``True`` após correção.
+        interaction_significant: ``True`` se algum ``MLMReport.interaction_p_value
+            < alpha`` (baseado em p-value bruto do MLM).
+        top_llm_by_friedman: LLM que aparece no maior número de pares Nemenyi
+            significativos (proxy de "mais vitórias"); ``None`` se não houver
+            pares significativos ou se nenhum teste Friedman foi executado.
+    """
+
+    run_id: str
+    round_id: str
+    wilcoxon_reports: tuple[WilcoxonReport, ...]
+    friedman_reports: tuple[FriedmanReport, ...]
+    mlm_reports: tuple[MLMReport, ...]
+    correction_method: str
+    alpha: float
+    base_difference_significant: bool
+    llm_difference_significant: bool
+    interaction_significant: bool
+    top_llm_by_friedman: str | None

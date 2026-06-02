@@ -64,6 +64,8 @@ forbidden_modules =
     scipy
     scikit_posthocs
     yaml
+ignore_imports =
+    inteligenciomica_eval.application.statistical_analysis -> statsmodels
 
 # ---------------------------------------------------------------------------
 # Contract 3: infrastructure must not import cli

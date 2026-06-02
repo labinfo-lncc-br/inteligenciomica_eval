@@ -331,18 +331,27 @@ class FriedmanNemenyiAdapter:
         p_f = float(p)
         significant = p_f < self._cfg.alpha
 
+        # Médias por grupo — usadas para determinar o vencedor em cada par Nemenyi
+        mean_scores = [float(np.mean(groups_arrays[k])) for k in range(n_groups)]
+
         nemenyi_pairs: list[NemenyiPair] = []
         if significant:
             ph = sp.posthoc_nemenyi_friedman(data_matrix)
             for i in range(n_groups):
                 for j in range(i + 1, n_groups):
                     pv = float(ph.iloc[i, j])
+                    pair_sig = pv < self._cfg.alpha
+                    # Vencedor: LLM com média superior no bloco; None se não significativo
+                    winner: str | None = None
+                    if pair_sig:
+                        winner = llms[i] if mean_scores[i] > mean_scores[j] else llms[j]
                     nemenyi_pairs.append(
                         NemenyiPair(
                             llm_a=llms[i],
                             llm_b=llms[j],
                             p_value=pv,
-                            significant=pv < self._cfg.alpha,
+                            significant=pair_sig,
+                            winner=winner,
                         )
                     )
 
