@@ -34,6 +34,7 @@ from inteligenciomica_eval.domain.ports import (
     MetricSuitePort,
     MLMReport,
     ModelSpec,
+    NemenyiPair,
     ResultFrame,
     ResultReaderPort,
     ResultWriterPort,
@@ -214,13 +215,44 @@ class _StubResultReader:
 
 class _StubStats:
     def wilcoxon_paired(self, frame: ResultFrame, metric: str) -> WilcoxonReport:
-        return WilcoxonReport(statistic=1.5, p_value=0.04, effect_size=0.3, n_pairs=13)
+        return WilcoxonReport(
+            metric=metric,
+            base_a="ID_230K",
+            base_b="IDx_400k",
+            statistic=1.5,
+            p_value=0.04,
+            p_value_corrected=None,
+            significant=True,
+            n_pairs=13,
+            effect_size_r=0.3,
+        )
 
     def friedman_nemenyi(self, frame: ResultFrame, metric: str) -> FriedmanReport:
-        return FriedmanReport(statistic=8.2, p_value=0.02, post_hoc={"A vs B": 0.03})
+        return FriedmanReport(
+            metric=metric,
+            chi2_statistic=8.2,
+            p_value=0.02,
+            p_value_corrected=None,
+            significant=True,
+            n_groups=3,
+            n_blocks=13,
+            nemenyi_pairs=(
+                NemenyiPair(llm_a="a", llm_b="b", p_value=0.03, significant=True),
+            ),
+        )
 
     def mixed_linear_model(self, frame: ResultFrame, formula: str) -> MLMReport:
-        return MLMReport(formula=formula, aic=120.5, bic=130.1, coef={"base": 0.15})
+        return MLMReport(
+            formula=formula,
+            base_effect_coef=0.15,
+            base_effect_p_value=0.02,
+            llm_effect_p_values={"llm-b": 0.04},
+            interaction_p_value=0.10,
+            interaction_significant=False,
+            aic=120.5,
+            n_observations=39,
+            convergence_warning=False,
+        )
 
 
 class _StubAnnotationReader:
@@ -380,29 +412,77 @@ class TestDTOInstantiation:
         assert a.bertscore_f1 == pytest.approx(0.82)
         assert a.rouge_l == pytest.approx(0.71)
 
+    def test_nemenyi_pair(self) -> None:
+        pair = NemenyiPair(llm_a="llm-a", llm_b="llm-b", p_value=0.03, significant=True)
+        assert pair.llm_a == "llm-a"
+        assert pair.p_value == pytest.approx(0.03)
+        assert pair.significant is True
+
     def test_wilcoxon_report(self) -> None:
-        w = WilcoxonReport(statistic=2.3, p_value=0.02, effect_size=0.4, n_pairs=13)
+        w = WilcoxonReport(
+            metric="final_score",
+            base_a="ID_230K",
+            base_b="IDx_400k",
+            statistic=2.3,
+            p_value=0.02,
+            p_value_corrected=0.04,
+            significant=True,
+            n_pairs=13,
+            effect_size_r=0.4,
+        )
         assert w.n_pairs == 13
         assert w.p_value == pytest.approx(0.02)
+        assert w.base_a == "ID_230K"
+        assert w.effect_size_r == pytest.approx(0.4)
+
+    def test_wilcoxon_report_no_correction(self) -> None:
+        w = WilcoxonReport(
+            metric="answer_correctness",
+            base_a="ID_230K",
+            base_b="IDx_400k",
+            statistic=5.0,
+            p_value=0.10,
+            p_value_corrected=None,
+            significant=False,
+            n_pairs=5,
+            effect_size_r=None,
+        )
+        assert w.p_value_corrected is None
+        assert w.effect_size_r is None
+        assert w.significant is False
 
     def test_friedman_report(self) -> None:
+        pair = NemenyiPair(llm_a="a", llm_b="b", p_value=0.03, significant=True)
         f = FriedmanReport(
-            statistic=9.1,
+            metric="final_score",
+            chi2_statistic=9.1,
             p_value=0.01,
-            post_hoc={"A vs B": 0.03, "A vs C": 0.04},
+            p_value_corrected=None,
+            significant=True,
+            n_groups=3,
+            n_blocks=13,
+            nemenyi_pairs=(pair,),
         )
-        assert f.statistic == pytest.approx(9.1)
-        assert "A vs B" in f.post_hoc
+        assert f.chi2_statistic == pytest.approx(9.1)
+        assert f.n_groups == 3
+        assert len(f.nemenyi_pairs) == 1
 
     def test_mlm_report(self) -> None:
         m = MLMReport(
-            formula="score ~ base + (1|seed)",
+            formula="final_score ~ base * llm + (1 | question_id)",
+            base_effect_coef=0.12,
+            base_effect_p_value=0.03,
+            llm_effect_p_values={"llm-b": 0.04, "llm-c": 0.15},
+            interaction_p_value=0.08,
+            interaction_significant=False,
             aic=115.0,
-            bic=125.5,
-            coef={"base": 0.12, "Intercept": 0.5},
+            n_observations=78,
+            convergence_warning=False,
         )
-        assert m.formula == "score ~ base + (1|seed)"
-        assert m.coef["base"] == pytest.approx(0.12)
+        assert m.formula == "final_score ~ base * llm + (1 | question_id)"
+        assert m.base_effect_coef == pytest.approx(0.12)
+        assert m.llm_effect_p_values["llm-b"] == pytest.approx(0.04)
+        assert m.convergence_warning is False
 
     def test_critical_annotation(self) -> None:
         row_id = _make_row_id()

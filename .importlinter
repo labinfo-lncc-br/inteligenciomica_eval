@@ -30,6 +30,8 @@ forbidden_modules =
     rouge_score
     deepeval
     statsmodels
+    scipy
+    scikit_posthocs
     yaml
 
 # ---------------------------------------------------------------------------
@@ -59,6 +61,8 @@ forbidden_modules =
     rouge_score
     deepeval
     statsmodels
+    scipy
+    scikit_posthocs
     yaml
 
 # ---------------------------------------------------------------------------

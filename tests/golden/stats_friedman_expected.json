@@ -1,0 +1,32 @@
+{
+  "description": "Golden dataset para FriedmanNemenyiAdapter — 13 blocos (question_id q01..q13, seed=42, base=IDx_400k), 3 LLMs. Calculado independentemente via scipy.stats.friedmanchisquare + scikit_posthocs.posthoc_nemenyi_friedman.",
+  "blocks": [
+    {"question_id": "q01", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.72, "llm_b_score": 0.65, "llm_c_score": 0.58},
+    {"question_id": "q02", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.68, "llm_b_score": 0.61, "llm_c_score": 0.54},
+    {"question_id": "q03", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.81, "llm_b_score": 0.74, "llm_c_score": 0.67},
+    {"question_id": "q04", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.79, "llm_b_score": 0.72, "llm_c_score": 0.64},
+    {"question_id": "q05", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.65, "llm_b_score": 0.59, "llm_c_score": 0.51},
+    {"question_id": "q06", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.88, "llm_b_score": 0.80, "llm_c_score": 0.74},
+    {"question_id": "q07", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.74, "llm_b_score": 0.67, "llm_c_score": 0.60},
+    {"question_id": "q08", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.71, "llm_b_score": 0.64, "llm_c_score": 0.57},
+    {"question_id": "q09", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.83, "llm_b_score": 0.76, "llm_c_score": 0.69},
+    {"question_id": "q10", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.69, "llm_b_score": 0.62, "llm_c_score": 0.55},
+    {"question_id": "q11", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.77, "llm_b_score": 0.70, "llm_c_score": 0.63},
+    {"question_id": "q12", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.75, "llm_b_score": 0.68, "llm_c_score": 0.61},
+    {"question_id": "q13", "seed": 42, "base": "IDx_400k", "llm_a_score": 0.80, "llm_b_score": 0.73, "llm_c_score": 0.66}
+  ],
+  "metric": "final_score",
+  "llm_names": ["llm-alpha", "llm-beta", "llm-gamma"],
+  "expected": {
+    "chi2_statistic": 26.0,
+    "p_value": 0.00000226,
+    "significant": true,
+    "n_groups": 3,
+    "n_blocks": 13,
+    "nemenyi_pairs": [
+      {"llm_a": "llm-alpha", "llm_b": "llm-beta", "p_value": 0.029056, "significant": true},
+      {"llm_a": "llm-alpha", "llm_b": "llm-gamma", "p_value": 0.000001, "significant": true},
+      {"llm_a": "llm-beta",  "llm_b": "llm-gamma", "p_value": 0.029056, "significant": true}
+    ]
+  }
+}

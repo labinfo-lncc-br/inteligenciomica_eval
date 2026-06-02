@@ -32,6 +32,9 @@ dependencies = [
     "pillow>=12.2.0",
     "bert-score>=0.3.13",
     "rouge-score>=0.1.2",
+    "statsmodels>=0.14",
+    "scikit-posthocs>=0.9",
+    "scipy>=1.12",
 ]
 
 [project.scripts]
@@ -127,6 +130,11 @@ ignore_missing_imports = true
 # Test-only deps without type stubs (integration / smoke E2E).
 [[tool.mypy.overrides]]
 module = ["docker.*", "testcontainers.*"]
+ignore_missing_imports = true
+
+# Stats deps — sem stubs mypy (TAREFA-404).
+[[tool.mypy.overrides]]
+module = ["statsmodels.*", "scikit_posthocs.*", "patsy.*", "scipy.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

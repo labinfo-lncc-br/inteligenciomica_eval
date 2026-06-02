@@ -110,3 +110,28 @@ class DeterministicAdapterConfig:
     lang: str = _DEFAULT_BERT_LANG
     rescale_with_baseline: bool = True
     device: str = "cpu"
+
+
+@dataclass(frozen=True, slots=True)
+class StatsAdapterConfig:
+    """Configuração dos adapters estatísticos (TAREFA-404, §5.1, ADR-011).
+
+    Compartilhada pelos três adapters: ``WilcoxonAdapter``,
+    ``FriedmanNemenyiAdapter`` e ``MixedLinearModelAdapter``.
+
+    Args:
+        alpha: nível de significância para testes e pós-hoc (padrão 0.05).
+        correction_method: método de correção múltipla quando aplicado pelo
+            ``StatisticalAnalysisUseCase`` (TAREFA-405): ``"benjamini-hochberg"``
+            (FDR) ou ``"holm"`` (FWER). Os adapters desta tarefa não aplicam
+            correção — ``p_value_corrected=None`` é o padrão.
+        min_pairs_wilcoxon: mínimo de pares para Wilcoxon; abaixo disso retorna
+            ``significant=False``, ``p_value=1.0`` com WARNING (sem exceção).
+        reml: se ``True``, ajusta o modelo linear misto com REML (padrão);
+            ``False`` usa ML (máxima verossimilhança).
+    """
+
+    alpha: float = 0.05
+    correction_method: str = "benjamini-hochberg"
+    min_pairs_wilcoxon: int = 5
+    reml: bool = True

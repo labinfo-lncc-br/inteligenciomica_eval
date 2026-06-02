@@ -268,3 +268,110 @@ class ModelWaveSpec:
     quantization: str
     gpu_index: int
     extra_args: dict[str, str]
+
+
+# ---------------------------------------------------------------------------
+# VOs de análise estatística (TAREFA-404, §5.1 StatsPort, ADR-011)
+# Frozen dataclasses sem Pydantic — compatíveis com domínio puro.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NemenyiPair:
+    """Par de LLMs comparados pelo pós-hoc Nemenyi (TAREFA-404, ADR-011).
+
+    Args:
+        llm_a: identificador do primeiro LLM do par.
+        llm_b: identificador do segundo LLM do par.
+        p_value: p-valor do teste pós-hoc Nemenyi para este par.
+        significant: ``True`` se ``p_value < alpha`` (default 0.05).
+    """
+
+    llm_a: str
+    llm_b: str
+    p_value: float
+    significant: bool
+
+
+@dataclass(frozen=True, slots=True)
+class WilcoxonReport:
+    """Resultado completo do teste de Wilcoxon pareado (TAREFA-404, §5.1).
+
+    Args:
+        metric: nome da métrica testada (ex.: ``"final_score"``).
+        base_a: identificador da primeira base de conhecimento.
+        base_b: identificador da segunda base de conhecimento.
+        statistic: estatística W do teste de Wilcoxon.
+        p_value: p-valor bruto (dois lados, zero_method=wilcox).
+        p_value_corrected: p-valor após correção múltipla; ``None`` se não aplicada.
+        significant: ``True`` se ``p_value_corrected`` (ou ``p_value``) < alpha.
+        n_pairs: número de pares válidos utilizados no teste.
+        effect_size_r: tamanho do efeito r de Rosenthal (``Z / sqrt(N)``);
+            ``None`` se amostra insuficiente.
+    """
+
+    metric: str
+    base_a: str
+    base_b: str
+    statistic: float
+    p_value: float
+    p_value_corrected: float | None
+    significant: bool
+    n_pairs: int
+    effect_size_r: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class FriedmanReport:
+    """Resultado do teste de Friedman com pós-hoc Nemenyi (TAREFA-404, §5.1).
+
+    Args:
+        metric: nome da métrica testada.
+        chi2_statistic: estatística chi² do teste de Friedman.
+        p_value: p-valor bruto do teste de Friedman.
+        p_value_corrected: p-valor após correção múltipla; ``None`` se não aplicada.
+        significant: ``True`` se ``p_value_corrected`` (ou ``p_value``) < alpha.
+        n_groups: número de grupos (LLMs) testados.
+        n_blocks: número de blocos (combinações de question_id x seed x base).
+        nemenyi_pairs: tupla de comparações pós-hoc; vazia se ``significant=False``.
+    """
+
+    metric: str
+    chi2_statistic: float
+    p_value: float
+    p_value_corrected: float | None
+    significant: bool
+    n_groups: int
+    n_blocks: int
+    nemenyi_pairs: tuple[NemenyiPair, ...]
+
+
+@dataclass(frozen=True)
+class MLMReport:
+    """Resultado do modelo linear misto ajustado via statsmodels (TAREFA-404, §5.1).
+
+    ``llm_effect_p_values`` é um dict mutável; a dataclass congela apenas a
+    referência do atributo (não usa ``slots=True`` por consistência com padrão
+    existente em VOs com campos dict).
+
+    Args:
+        formula: fórmula Wilkinson original recebida pelo adapter.
+        base_effect_coef: coeficiente do efeito fixo de ``base``.
+        base_effect_p_value: p-valor do coeficiente de ``base``.
+        llm_effect_p_values: p-valores dos efeitos fixos de cada LLM (vs. referência).
+        interaction_p_value: p-valor do termo de interação ``base:llm``.
+        interaction_significant: ``True`` se ``interaction_p_value < alpha``.
+        aic: critério de informação de Akaike do modelo ajustado.
+        n_observations: número de observações usadas no ajuste.
+        convergence_warning: ``True`` se o optimizer não convergiu.
+    """
+
+    formula: str
+    base_effect_coef: float
+    base_effect_p_value: float
+    llm_effect_p_values: dict[str, float]
+    interaction_p_value: float
+    interaction_significant: bool
+    aic: float
+    n_observations: int
+    convergence_warning: bool

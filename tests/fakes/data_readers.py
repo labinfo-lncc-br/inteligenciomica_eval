@@ -4,18 +4,44 @@ from inteligenciomica_eval.domain.ports import (
     CriticalAnnotation,
     FriedmanReport,
     MLMReport,
+    NemenyiPair,
     ResultFrame,
     WilcoxonReport,
 )
 
 _DEFAULT_WILCOXON = WilcoxonReport(
-    statistic=2.5, p_value=0.03, effect_size=0.35, n_pairs=13
+    metric="final_score",
+    base_a="ID_230K",
+    base_b="IDx_400k",
+    statistic=0.0,
+    p_value=0.03,
+    p_value_corrected=None,
+    significant=True,
+    n_pairs=13,
+    effect_size_r=0.35,
 )
 _DEFAULT_FRIEDMAN = FriedmanReport(
-    statistic=8.4, p_value=0.015, post_hoc={"A vs B": 0.02}
+    metric="final_score",
+    chi2_statistic=8.4,
+    p_value=0.015,
+    p_value_corrected=None,
+    significant=True,
+    n_groups=3,
+    n_blocks=13,
+    nemenyi_pairs=(
+        NemenyiPair(llm_a="llm-a", llm_b="llm-b", p_value=0.02, significant=True),
+    ),
 )
 _DEFAULT_MLM = MLMReport(
-    formula="score ~ base + (1|seed)", aic=118.0, bic=128.5, coef={"base": 0.12}
+    formula="final_score ~ base * llm + (1 | question_id)",
+    base_effect_coef=0.12,
+    base_effect_p_value=0.03,
+    llm_effect_p_values={"llm-b": 0.04, "llm-c": 0.12},
+    interaction_p_value=0.08,
+    interaction_significant=False,
+    aic=118.0,
+    n_observations=78,
+    convergence_warning=False,
 )
 
 
@@ -134,11 +160,16 @@ class FakeStats:
             formula: Wilkinson formula string used as the returned report's formula.
 
         Returns:
-            MLMReport with the given formula and the configured AIC/BIC/coef.
+            MLMReport with the given formula and the configured fields.
         """
         return MLMReport(
             formula=formula,
+            base_effect_coef=self._mlm.base_effect_coef,
+            base_effect_p_value=self._mlm.base_effect_p_value,
+            llm_effect_p_values=dict(self._mlm.llm_effect_p_values),
+            interaction_p_value=self._mlm.interaction_p_value,
+            interaction_significant=self._mlm.interaction_significant,
             aic=self._mlm.aic,
-            bic=self._mlm.bic,
-            coef=dict(self._mlm.coef),
+            n_observations=self._mlm.n_observations,
+            convergence_warning=self._mlm.convergence_warning,
         )

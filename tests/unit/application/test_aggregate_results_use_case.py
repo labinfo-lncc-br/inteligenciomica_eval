@@ -6,14 +6,17 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from factories.factories import (
     make_config_aggregate,
     make_evaluation_result,
     make_generated_answer,
     make_row_id,
 )
-from fakes.storage import InMemoryResultReader, InMemoryResultStore, InMemoryResultWriter
+from fakes.storage import (
+    InMemoryResultReader,
+    InMemoryResultStore,
+    InMemoryResultWriter,
+)
 
 from inteligenciomica_eval.application.aggregate_results import (
     AggregateResultsInput,
@@ -24,7 +27,6 @@ from inteligenciomica_eval.domain.ports import ResultFrame
 from inteligenciomica_eval.domain.services.aggregation import AggregationService
 from inteligenciomica_eval.domain.services.rank_score import RankScoreCalculator
 from inteligenciomica_eval.domain.value_objects import (
-    FinalScore,
     RankScore,
 )
 
@@ -74,7 +76,7 @@ def _mock_aggregation_service(aggregates: tuple) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# a) 2 configs × 3 perguntas × 2 seeds = 12 resultados — agregados corretos
+# a) 2 configs x 3 perguntas x 2 seeds = 12 resultados — agregados corretos
 # ---------------------------------------------------------------------------
 
 
@@ -118,7 +120,7 @@ def test_best_config_is_highest_rank_score(tmp_path: Path) -> None:
     agg_low = _make_mock_agg("ID_230K", "mistral-7b", rank=0.25)
     agg_high = _make_mock_agg("IDx_400k", "llama3-8b", rank=0.75)
 
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     # AggregationService retorna os agregados em ordem arbitrária (baixo primeiro)
     svc = _mock_aggregation_service((agg_low, agg_high))
 
@@ -138,7 +140,7 @@ def test_n_nan_excluded_is_sum_of_all_configs(tmp_path: Path) -> None:
     agg_a = _make_mock_agg("IDx_400k", "llama3-8b", rank=0.75, n_excl=1)
     agg_b = _make_mock_agg("ID_230K", "mistral-7b", rank=0.25, n_excl=2)
 
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     svc = _mock_aggregation_service((agg_a, agg_b))
 
     uc = _make_use_case(reader, svc, tmp_path)
@@ -157,7 +159,7 @@ def test_aggregates_ordered_descending_by_rank_score(tmp_path: Path) -> None:
     agg_high = _make_mock_agg("IDx_400k", "llama3-8b", rank=0.75)
     agg_low = _make_mock_agg("ID_230K", "mistral-7b-v2", rank=0.25)
 
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     # AggregationService retorna sem ordem definida
     svc = _mock_aggregation_service((agg_low, agg_high, agg_mid))
 
@@ -181,7 +183,7 @@ def test_nan_rank_score_goes_to_end(tmp_path: Path) -> None:
     )
     agg_valid = _make_mock_agg("ID_230K", "mistral-7b", rank=0.40)
 
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     svc = _mock_aggregation_service((agg_nan, agg_valid))
 
     uc = _make_use_case(reader, svc, tmp_path)
@@ -200,7 +202,7 @@ def test_json_summary_created_with_correct_fields(tmp_path: Path) -> None:
     agg_a = _make_mock_agg("IDx_400k", "llama3-8b", rank=0.75, n_excl=1)
     agg_b = _make_mock_agg("ID_230K", "mistral-7b", rank=0.25)
 
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     svc = _mock_aggregation_service((agg_a, agg_b))
 
     uc = _make_use_case(reader, svc, tmp_path)
@@ -226,7 +228,7 @@ def test_json_summary_created_with_correct_fields(tmp_path: Path) -> None:
 def test_json_uses_dataclasses_asdict_structure(tmp_path: Path) -> None:
     """Verifica que base/llm/rank_score são dicts aninhados (dataclasses.asdict)."""
     agg = _make_mock_agg("IDx_400k", "llama3-8b", rank=0.60)
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     svc = _mock_aggregation_service((agg,))
 
     uc = _make_use_case(reader, svc, tmp_path)
@@ -257,7 +259,12 @@ def test_filter_by_run_id_ignores_other_runs(tmp_path: Path) -> None:
         writer_a.append(
             make_evaluation_result(
                 answer=make_generated_answer(
-                    row_id=make_row_id(run_id="run-001", question_id=qid, base="IDx_400k", llm="llama3-8b"),
+                    row_id=make_row_id(
+                        run_id="run-001",
+                        question_id=qid,
+                        base="IDx_400k",
+                        llm="llama3-8b",
+                    ),
                     base="IDx_400k",
                     llm="llama3-8b",
                     question_id=qid,
@@ -268,7 +275,12 @@ def test_filter_by_run_id_ignores_other_runs(tmp_path: Path) -> None:
         writer_b.append(
             make_evaluation_result(
                 answer=make_generated_answer(
-                    row_id=make_row_id(run_id="run-002", question_id=qid, base="ID_230K", llm="mistral-7b"),
+                    row_id=make_row_id(
+                        run_id="run-002",
+                        question_id=qid,
+                        base="ID_230K",
+                        llm="mistral-7b",
+                    ),
                     base="ID_230K",
                     llm="mistral-7b",
                     question_id=qid,
@@ -310,8 +322,10 @@ def test_filter_by_run_id_ignores_other_runs(tmp_path: Path) -> None:
 
 def test_aggregation_service_is_injected_not_instantiated(tmp_path: Path) -> None:
     """Verifica que o use case delega 100% ao AggregationService injetado."""
-    reader = _mock_reader(tuple())
-    svc = _mock_aggregation_service((_make_mock_agg("IDx_400k", "llama3-8b", rank=0.5),))
+    reader = _mock_reader(())
+    svc = _mock_aggregation_service(
+        (_make_mock_agg("IDx_400k", "llama3-8b", rank=0.5),)
+    )
 
     uc = _make_use_case(reader, svc, tmp_path)
     uc.execute(AggregateResultsInput(run_id=_RUN_ID, round_id=_ROUND_ID))
@@ -347,8 +361,11 @@ def _build_golden_results(run_id: str, round_id: str) -> tuple:
             annotation = 0 if (seed == 42 and qid == "q01") else None
             final_score = _nan if is_nan else 0.80
             row_id = make_row_id(
-                run_id=run_id, base="IDx_400k", llm="llama3-8b",
-                seed=seed, question_id=qid,
+                run_id=run_id,
+                base="IDx_400k",
+                llm="llama3-8b",
+                seed=seed,
+                question_id=qid,
             )
             rows.append(
                 make_evaluation_result(
@@ -369,8 +386,11 @@ def _build_golden_results(run_id: str, round_id: str) -> tuple:
         for qid in ["q01", "q02", "q03"]:
             annotation = 0 if (seed == 42 and qid == "q01") else None
             row_id = make_row_id(
-                run_id=run_id, base="ID_230K", llm="mistral-7b",
-                seed=seed, question_id=qid,
+                run_id=run_id,
+                base="ID_230K",
+                llm="mistral-7b",
+                seed=seed,
+                question_id=qid,
             )
             rows.append(
                 make_evaluation_result(
@@ -392,7 +412,9 @@ def _build_golden_results(run_id: str, round_id: str) -> tuple:
 def test_golden_aggregate_values(tmp_path: Path) -> None:
     """Verifica que os agregados reais batem com os valores do arquivo golden."""
     golden_path = (
-        Path(__file__).parent.parent.parent / "golden" / "aggregate_results_expected.json"
+        Path(__file__).parent.parent.parent
+        / "golden"
+        / "aggregate_results_expected.json"
     )
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
 
@@ -431,8 +453,10 @@ def test_golden_aggregate_values(tmp_path: Path) -> None:
     expected = golden["expected_aggregates"]
     assert len(out.aggregates) == len(expected)
 
-    for agg, exp in zip(out.aggregates, expected):
-        assert agg.base.value == exp["base"]["value"], f"base mismatch: {agg.base.value}"
+    for agg, exp in zip(out.aggregates, expected, strict=False):
+        assert agg.base.value == exp["base"]["value"], (
+            f"base mismatch: {agg.base.value}"
+        )
         assert agg.llm.value == exp["llm"]["value"], f"llm mismatch: {agg.llm.value}"
         assert agg.mean_score == pytest.approx(exp["mean_score"], abs=1e-9)
         assert agg.median_score == pytest.approx(exp["median_score"], abs=1e-9)
@@ -443,7 +467,9 @@ def test_golden_aggregate_values(tmp_path: Path) -> None:
             exp["critical_failure_rate"], abs=1e-9
         )
         assert agg.win_rate == pytest.approx(exp["win_rate"], abs=1e-9)
-        assert agg.rank_score.value == pytest.approx(exp["rank_score"]["value"], abs=1e-9)
+        assert agg.rank_score.value == pytest.approx(
+            exp["rank_score"]["value"], abs=1e-9
+        )
         assert agg.n_observations == exp["n_observations"]
         assert agg.n_excluded_nan == exp["n_excluded_nan"]
 
@@ -455,7 +481,7 @@ def test_golden_aggregate_values(tmp_path: Path) -> None:
 
 def test_empty_results_raises_value_error(tmp_path: Path) -> None:
     """Quando aggregate_all retorna (), execute() levanta ValueError — não IndexError."""
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     svc = _mock_aggregation_service(())  # sem configs
 
     uc = _make_use_case(reader, svc, tmp_path)
@@ -483,7 +509,7 @@ def test_json_nan_serialized_as_null(tmp_path: Path) -> None:
         rank_score=RankScore(float("nan")),
     )
 
-    reader = _mock_reader(tuple())
+    reader = _mock_reader(())
     svc = _mock_aggregation_service((agg_nan,))
 
     uc = _make_use_case(reader, svc, tmp_path)

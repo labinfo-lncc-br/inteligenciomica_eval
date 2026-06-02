@@ -499,7 +499,7 @@ class TestFakeStats:
         stats = FakeStats()
         frame = ResultFrame(results=())
         f = stats.friedman_nemenyi(frame, "score")
-        assert "A vs B" in f.post_hoc
+        assert isinstance(f.nemenyi_pairs, tuple)
 
     def test_mixed_linear_model_uses_passed_formula(self) -> None:
         from inteligenciomica_eval.domain.ports import ResultFrame
@@ -514,7 +514,15 @@ class TestFakeStats:
         from inteligenciomica_eval.domain.ports import ResultFrame, WilcoxonReport
 
         custom = WilcoxonReport(
-            statistic=99.0, p_value=0.001, effect_size=0.9, n_pairs=5
+            metric="m",
+            base_a="A",
+            base_b="B",
+            statistic=99.0,
+            p_value=0.001,
+            p_value_corrected=None,
+            significant=True,
+            n_pairs=5,
+            effect_size_r=0.9,
         )
         stats = FakeStats(wilcoxon=custom)
         w = stats.wilcoxon_paired(ResultFrame(results=()), "m")

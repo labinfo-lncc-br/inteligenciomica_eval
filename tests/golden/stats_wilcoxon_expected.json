@@ -1,0 +1,28 @@
+{
+  "description": "Golden dataset para WilcoxonAdapter — 13 pares (question_id q01..q13, seed=42). base_a=ID_230K, base_b=IDx_400k. Calculado independentemente via scipy.stats.wilcoxon(alternative='two-sided', zero_method='wilcox').",
+  "pairs": [
+    {"question_id": "q01", "seed": 42, "base_a_score": 0.72, "base_b_score": 0.58},
+    {"question_id": "q02", "seed": 42, "base_a_score": 0.68, "base_b_score": 0.54},
+    {"question_id": "q03", "seed": 42, "base_a_score": 0.81, "base_b_score": 0.67},
+    {"question_id": "q04", "seed": 42, "base_a_score": 0.79, "base_b_score": 0.63},
+    {"question_id": "q05", "seed": 42, "base_a_score": 0.65, "base_b_score": 0.51},
+    {"question_id": "q06", "seed": 42, "base_a_score": 0.88, "base_b_score": 0.74},
+    {"question_id": "q07", "seed": 42, "base_a_score": 0.74, "base_b_score": 0.60},
+    {"question_id": "q08", "seed": 42, "base_a_score": 0.71, "base_b_score": 0.57},
+    {"question_id": "q09", "seed": 42, "base_a_score": 0.83, "base_b_score": 0.69},
+    {"question_id": "q10", "seed": 42, "base_a_score": 0.69, "base_b_score": 0.55},
+    {"question_id": "q11", "seed": 42, "base_a_score": 0.77, "base_b_score": 0.63},
+    {"question_id": "q12", "seed": 42, "base_a_score": 0.75, "base_b_score": 0.61},
+    {"question_id": "q13", "seed": 42, "base_a_score": 0.80, "base_b_score": 0.66}
+  ],
+  "metric": "final_score",
+  "base_a": "ID_230K",
+  "base_b": "IDx_400k",
+  "expected": {
+    "statistic": 0.0,
+    "p_value": 0.00024414,
+    "significant": true,
+    "n_pairs": 13,
+    "effect_size_r": 1.017411
+  }
+}

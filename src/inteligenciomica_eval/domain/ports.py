@@ -13,6 +13,18 @@ from inteligenciomica_eval.domain.value_objects import (
     MetricVector,
     RowId,
 )
+from inteligenciomica_eval.domain.value_objects import (
+    FriedmanReport as FriedmanReport,
+)
+from inteligenciomica_eval.domain.value_objects import (
+    MLMReport as MLMReport,
+)
+from inteligenciomica_eval.domain.value_objects import (
+    NemenyiPair as NemenyiPair,
+)
+from inteligenciomica_eval.domain.value_objects import (
+    WilcoxonReport as WilcoxonReport,
+)
 
 # ---------------------------------------------------------------------------
 # DTOs auxiliares de domínio
@@ -143,67 +155,6 @@ class AuxMetrics:
 
     bertscore_f1: float
     rouge_l: float
-
-
-@dataclass(frozen=True, slots=True)
-class WilcoxonReport:
-    """Resultado do teste de Wilcoxon pareado (StatsPort).
-
-    Estrutura mínima para M0; será detalhada no M4 (StatsPort).
-
-    Args:
-        statistic: estatística W do teste.
-        p_value: p-valor do teste (após correção se aplicável).
-        effect_size: tamanho do efeito (r de Rosenthal).
-        n_pairs: número de pares utilizados no teste.
-    """
-
-    statistic: float
-    p_value: float
-    effect_size: float
-    n_pairs: int
-
-
-@dataclass(frozen=True)
-class FriedmanReport:
-    """Resultado do Friedman + Nemenyi post-hoc (StatsPort).
-
-    Estrutura mínima para M0; será detalhada no M4 (StatsPort).
-
-    ``post_hoc`` é um dict mutável; a dataclass é frozen apenas no sentido de
-    não permitir reatribuição do atributo — use como somente-leitura.
-
-    Args:
-        statistic: estatística chi² do teste de Friedman.
-        p_value: p-valor do teste de Friedman.
-        post_hoc: mapa de par→p-valor Nemenyi (ex.: ``{"A vs B": 0.03}``).
-    """
-
-    statistic: float
-    p_value: float
-    post_hoc: dict[str, float]
-
-
-@dataclass(frozen=True)
-class MLMReport:
-    """Resultado do modelo linear misto (StatsPort).
-
-    Estrutura mínima para M0; será detalhada no M4 (StatsPort).
-
-    ``coef`` é um dict mutável; a dataclass é frozen apenas no sentido de
-    não permitir reatribuição do atributo — use como somente-leitura.
-
-    Args:
-        formula: fórmula Wilkinson do modelo ajustado.
-        aic: critério de informação de Akaike.
-        bic: critério de informação Bayesiano.
-        coef: mapa de variável→coeficiente estimado.
-    """
-
-    formula: str
-    aic: float
-    bic: float
-    coef: dict[str, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -592,45 +543,63 @@ class ResultReaderPort(Protocol):
 
 @runtime_checkable
 class StatsPort(Protocol):
-    """Executa bateria estatística: Wilcoxon, Friedman+Nemenyi, MLM (§5.1).
+    """Executa bateria estatística: Wilcoxon, Friedman+Nemenyi, MLM (§5.1, ADR-011).
 
-    Implementações concretas ficam em ``infrastructure/adapters/``.
-    Detalhamento completo das assinaturas no M4.
+    Três adapters concretos implementam este Protocol (TAREFA-404):
+    ``WilcoxonAdapter``, ``FriedmanNemenyiAdapter``, ``MixedLinearModelAdapter``.
+    Cada adapter implementa os 3 métodos para satisfazer ``isinstance`` com
+    ``@runtime_checkable``; o método primário de cada um faz o trabalho real.
+    Orquestração: ``StatisticalAnalysisUseCase`` (TAREFA-405).
     """
 
     def wilcoxon_paired(self, frame: ResultFrame, metric: str) -> WilcoxonReport:
-        """Executa o teste de Wilcoxon pareado sobre uma métrica.
+        """Teste de Wilcoxon pareado entre as duas bases de conhecimento do frame.
+
+        Pareia observações por ``(question_id, seed)``. Requer exatamente 2 bases
+        distintas no ``ResultFrame``. Retorna ``significant=False`` com ``p_value=1.0``
+        se ``n_pairs < min_pairs`` (padrão 5) — sem levantar exceção (ADR-007).
 
         Args:
-            frame: conjunto de resultados a analisar.
-            metric: nome da coluna de métrica a testar.
+            frame: conjunto de resultados contendo as duas bases a comparar.
+            metric: nome da métrica a testar (``"final_score"`` ou campo de
+                :class:`~.value_objects.MetricVector`).
 
         Returns:
-            :class:`WilcoxonReport` com estatística, p-valor e effect size.
+            :class:`~.value_objects.WilcoxonReport` com estatística, p-valor,
+            effect size r de Rosenthal e metadados de pareamento.
         """
         ...
 
     def friedman_nemenyi(self, frame: ResultFrame, metric: str) -> FriedmanReport:
-        """Executa Friedman + post-hoc Nemenyi sobre uma métrica.
+        """Teste de Friedman + pós-hoc Nemenyi sobre os LLMs do frame.
+
+        Bloqueia por ``(question_id, seed, base)``. Requer ≥ 3 LLMs distintos;
+        retorna ``significant=False`` com ``nemenyi_pairs=()`` se < 3 grupos.
+        Pós-hoc só é calculado quando ``p_value < alpha`` (padrão 0.05).
 
         Args:
-            frame: conjunto de resultados a analisar.
-            metric: nome da coluna de métrica a testar.
+            frame: conjunto de resultados com múltiplos LLMs.
+            metric: nome da métrica a testar.
 
         Returns:
-            :class:`FriedmanReport` com estatística, p-valor e mapa post-hoc.
+            :class:`~.value_objects.FriedmanReport` com chi², p-valor e pares Nemenyi.
         """
         ...
 
     def mixed_linear_model(self, frame: ResultFrame, formula: str) -> MLMReport:
-        """Ajusta modelo linear misto com a fórmula Wilkinson fornecida.
+        """Modelo linear misto via statsmodels, degradação graceful em falha numérica.
+
+        Converte ``ResultFrame`` para ``pandas.DataFrame`` internamente. Em falha de
+        convergência ou exceção numérica, retorna p-values NaN e
+        ``convergence_warning=True`` — nunca propaga exceção (ADR-007).
 
         Args:
             frame: conjunto de resultados a analisar.
-            formula: fórmula Wilkinson do modelo (ex.: ``"score ~ base + (1|seed)"``).
+            formula: fórmula Wilkinson (ex.:
+                ``"final_score ~ base * llm + (1 | question_id)"``).
 
         Returns:
-            :class:`MLMReport` com AIC, BIC e coeficientes estimados.
+            :class:`~.value_objects.MLMReport` com coeficientes, p-valores e AIC.
         """
         ...
 
