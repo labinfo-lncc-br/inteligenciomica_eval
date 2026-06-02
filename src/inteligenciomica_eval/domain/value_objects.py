@@ -5,6 +5,7 @@ import math
 import re
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from inteligenciomica_eval.domain.errors import (
     InteligenciomicaEvalError,
@@ -426,3 +427,41 @@ class StatsReport:
     llm_difference_significant: bool
     interaction_significant: bool
     top_llm_by_friedman: str | None
+
+
+# ---------------------------------------------------------------------------
+# VOs de visualização e relatório (TAREFA-406, §11.4, ADR-001)
+# Frozen dataclasses sem Pydantic — domínio puro.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FigurePath:
+    """Caminho para uma figura gerada pelo ``VisualizationPort`` (TAREFA-406, §11.4).
+
+    Args:
+        path: caminho absoluto ou relativo para o arquivo de figura gerado.
+        format: formato da figura — ``"svg"`` ou ``"png"``.
+        plot_type: tipo canônico do plot; um de ``"rankscore_heatmap"``,
+            ``"finalscore_boxplot"``, ``"interaction"``, ``"radar"``,
+            ``"per_question_ranking"``, ``"failure_breakdown"``.
+    """
+
+    path: Path
+    format: str
+    plot_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReportPath:
+    """Caminho para um relatório gerado pelo ``ReportPort`` (TAREFA-406, §11.4).
+
+    Args:
+        path: caminho absoluto ou relativo para o arquivo de relatório gerado.
+        format: formato do relatório — ``"html"`` em M4; ``"pdf"`` reservado para M5.
+        run_id: identificador do run de avaliação ao qual o relatório pertence.
+    """
+
+    path: Path
+    format: str
+    run_id: str

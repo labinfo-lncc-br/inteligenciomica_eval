@@ -2,16 +2,23 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from inteligenciomica_eval.domain.entities import EvaluationResult
+from inteligenciomica_eval.domain.services.aggregation import (
+    ConfigAggregate as ConfigAggregate,
+)
 from inteligenciomica_eval.domain.value_objects import (
     BaseId,
     DeterminismRegime,
+    FigurePath,
     FinalScore,
     LLMId,
     MetricVector,
+    ReportPath,
     RowId,
+    StatsReport,
 )
 from inteligenciomica_eval.domain.value_objects import (
     FriedmanReport as FriedmanReport,
@@ -686,5 +693,157 @@ class GeneratorFactory(Protocol):
 
         Returns:
             :class:`GeneratorPort` apontando para o servidor na URL.
+        """
+        ...
+
+
+@runtime_checkable
+class VisualizationPort(Protocol):
+    """Gera os 6 plots canônicos da rodada de avaliação (§11.4, TAREFA-406/407).
+
+    Todos os métodos são síncronos — a geração de figuras é CPU-bound (Matplotlib)
+    sem I/O de rede. A implementação concreta fica em ``visualization/``.
+    Nota de operacionalização M4 item 3: todos os 6 plots em um único adapter.
+    """
+
+    def plot_rankscore_heatmap(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+        metric_name: str = "rank_score",
+    ) -> FigurePath:
+        """Heatmap de RankScore por configuração {base x llm}.
+
+        Args:
+            aggregates: sequência de agregados de configuração.
+            output_dir: diretório de saída para o arquivo de figura.
+            metric_name: nome da métrica a exibir no heatmap.
+
+        Returns:
+            :class:`FigurePath` com caminho, formato e tipo do plot gerado.
+        """
+        ...
+
+    def plot_finalscore_boxplots(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+        results: ResultFrame | None = None,
+    ) -> FigurePath:
+        """Boxplots de FinalScore por configuração.
+
+        Args:
+            aggregates: sequência de agregados de configuração.
+            output_dir: diretório de saída para o arquivo de figura.
+            results: frame com resultados individuais; ``None`` usa apenas agregados.
+
+        Returns:
+            :class:`FigurePath` com caminho, formato e tipo do plot gerado.
+        """
+        ...
+
+    def plot_interaction(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+    ) -> FigurePath:
+        """Plot de interação base x LLM (linhas cruzadas = interação significativa).
+
+        Args:
+            aggregates: sequência de agregados de configuração.
+            output_dir: diretório de saída para o arquivo de figura.
+
+        Returns:
+            :class:`FigurePath` com caminho, formato e tipo do plot gerado.
+        """
+        ...
+
+    def plot_radar(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+        top_n: int = 5,
+    ) -> FigurePath:
+        """Radar chart das top-n configurações por métrica multidimensional.
+
+        Args:
+            aggregates: sequência de agregados de configuração.
+            output_dir: diretório de saída para o arquivo de figura.
+            top_n: número de configurações a incluir no radar.
+
+        Returns:
+            :class:`FigurePath` com caminho, formato e tipo do plot gerado.
+        """
+        ...
+
+    def plot_per_question_ranking(
+        self,
+        results: ResultFrame,
+        *,
+        output_dir: Path,
+    ) -> FigurePath:
+        """Ranking por pergunta — mostra variância intra-pergunta entre configs.
+
+        Args:
+            results: frame com resultados individuais por pergunta.
+            output_dir: diretório de saída para o arquivo de figura.
+
+        Returns:
+            :class:`FigurePath` com caminho, formato e tipo do plot gerado.
+        """
+        ...
+
+    def plot_failure_breakdown(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+    ) -> FigurePath:
+        """Breakdown de falhas críticas (Camada 3) por configuração.
+
+        Args:
+            aggregates: sequência de agregados de configuração.
+            output_dir: diretório de saída para o arquivo de figura.
+
+        Returns:
+            :class:`FigurePath` com caminho, formato e tipo do plot gerado.
+        """
+        ...
+
+
+@runtime_checkable
+class ReportPort(Protocol):
+    """Gera o relatório executivo HTML consolidado da rodada (§11.4, TAREFA-406/408).
+
+    Nota de operacionalização M4 item 5: arquivo único autocontido, sem URLs externas.
+    A implementação concreta fica em ``infrastructure/adapters/``.
+    """
+
+    def generate_html(
+        self,
+        *,
+        run_id: str,
+        aggregates: Sequence[ConfigAggregate],
+        results: ResultFrame,
+        stats_report: StatsReport,
+        figure_paths: Sequence[FigurePath],
+        output_path: Path,
+    ) -> ReportPath:
+        """Gera relatório HTML autocontido com plots e análise estatística.
+
+        Args:
+            run_id: identificador do run de avaliação.
+            aggregates: sequência de agregados de configuração calculados.
+            results: frame com todos os resultados individuais da rodada.
+            stats_report: relatório estatístico consolidado (TAREFA-405).
+            figure_paths: sequência de caminhos das figuras a embutir no HTML.
+            output_path: caminho de saída para o arquivo HTML gerado.
+
+        Returns:
+            :class:`ReportPath` com caminho, formato ``"html"`` e run_id.
         """
         ...

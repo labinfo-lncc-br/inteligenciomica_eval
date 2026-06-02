@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,7 @@ from inteligenciomica_eval.domain.ports import (
     AnnotationReaderPort,
     AuxMetrics,
     Chunk,
+    ConfigAggregate,
     CriticalAnnotation,
     DeterministicMetricPort,
     EvaluationSample,
@@ -35,6 +37,7 @@ from inteligenciomica_eval.domain.ports import (
     MLMReport,
     ModelSpec,
     NemenyiPair,
+    ReportPort,
     ResultFrame,
     ResultReaderPort,
     ResultWriterPort,
@@ -44,17 +47,21 @@ from inteligenciomica_eval.domain.ports import (
     RubricResult,
     ServerHandle,
     StatsPort,
+    VisualizationPort,
     VLLMServerManagerPort,
     WilcoxonReport,
 )
 from inteligenciomica_eval.domain.value_objects import (
     BaseId,
     DeterminismRegime,
+    FigurePath,
     FinalScore,
     LLMId,
     MetricVector,
+    ReportPath,
     RowId,
     Seed,
+    StatsReport,
 )
 
 # ---------------------------------------------------------------------------
@@ -260,6 +267,97 @@ class _StubAnnotationReader:
         return [CriticalAnnotation(row_id=_make_row_id(), flag=0, note=None)]
 
 
+def _make_figure_path(plot_type: str = "rankscore_heatmap") -> FigurePath:
+    return FigurePath(
+        path=Path("/tmp/fig.svg"),
+        format="svg",
+        plot_type=plot_type,
+    )
+
+
+def _make_stats_report() -> StatsReport:
+    return StatsReport(
+        run_id="run-test",
+        round_id="round_1",
+        wilcoxon_reports=(),
+        friedman_reports=(),
+        mlm_reports=(),
+        correction_method="benjamini-hochberg",
+        alpha=0.05,
+        base_difference_significant=False,
+        llm_difference_significant=False,
+        interaction_significant=False,
+        top_llm_by_friedman=None,
+    )
+
+
+class _StubVisualization:
+    def plot_rankscore_heatmap(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+        metric_name: str = "rank_score",
+    ) -> FigurePath:
+        return _make_figure_path("rankscore_heatmap")
+
+    def plot_finalscore_boxplots(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+        results: ResultFrame | None = None,
+    ) -> FigurePath:
+        return _make_figure_path("finalscore_boxplot")
+
+    def plot_interaction(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+    ) -> FigurePath:
+        return _make_figure_path("interaction")
+
+    def plot_radar(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+        top_n: int = 5,
+    ) -> FigurePath:
+        return _make_figure_path("radar")
+
+    def plot_per_question_ranking(
+        self,
+        results: ResultFrame,
+        *,
+        output_dir: Path,
+    ) -> FigurePath:
+        return _make_figure_path("per_question_ranking")
+
+    def plot_failure_breakdown(
+        self,
+        aggregates: Sequence[ConfigAggregate],
+        *,
+        output_dir: Path,
+    ) -> FigurePath:
+        return _make_figure_path("failure_breakdown")
+
+
+class _StubReport:
+    def generate_html(
+        self,
+        *,
+        run_id: str,
+        aggregates: Sequence[ConfigAggregate],
+        results: ResultFrame,
+        stats_report: StatsReport,
+        figure_paths: Sequence[FigurePath],
+        output_path: Path,
+    ) -> ReportPath:
+        return ReportPath(path=output_path, format="html", run_id=run_id)
+
+
 class _StubVLLMServerManager:
     async def start(self, model: ModelSpec) -> ServerHandle:
         return ServerHandle(
@@ -320,11 +418,19 @@ class TestPortContracts:
     def test_vllm_server_manager_port_accepts_stub(self) -> None:
         assert isinstance(_StubVLLMServerManager(), VLLMServerManagerPort)
 
+    def test_visualization_port_accepts_stub(self) -> None:
+        assert isinstance(_StubVisualization(), VisualizationPort)
+
+    def test_report_port_accepts_stub(self) -> None:
+        assert isinstance(_StubReport(), ReportPort)
+
     def test_object_without_methods_rejected(self) -> None:
         """Objeto sem os métodos obrigatórios não satisfaz o Protocol."""
         assert not isinstance(object(), RetrieverPort)
         assert not isinstance(object(), GeneratorPort)
         assert not isinstance(object(), ResultWriterPort)
+        assert not isinstance(object(), VisualizationPort)
+        assert not isinstance(object(), ReportPort)
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +642,36 @@ class TestDTOInstantiation:
         frame = ResultFrame(results=())
         assert frame.results == ()
 
+    def test_figure_path(self) -> None:
+        fp = FigurePath(
+            path=Path("/out/plots/rankscore.svg"),
+            format="svg",
+            plot_type="rankscore_heatmap",
+        )
+        assert fp.path == Path("/out/plots/rankscore.svg")
+        assert fp.format == "svg"
+        assert fp.plot_type == "rankscore_heatmap"
+
+    def test_figure_path_is_immutable(self) -> None:
+        fp = FigurePath(path=Path("/tmp/fig.svg"), format="svg", plot_type="radar")
+        with pytest.raises(AttributeError):
+            fp.format = "png"  # type: ignore[misc]
+
+    def test_report_path(self) -> None:
+        rp = ReportPath(
+            path=Path("/out/report.html"),
+            format="html",
+            run_id="run-20260601",
+        )
+        assert rp.path == Path("/out/report.html")
+        assert rp.format == "html"
+        assert rp.run_id == "run-20260601"
+
+    def test_report_path_is_immutable(self) -> None:
+        rp = ReportPath(path=Path("/out/r.html"), format="html", run_id="run-x")
+        with pytest.raises(AttributeError):
+            rp.run_id = "outro"  # type: ignore[misc]
+
 
 # ---------------------------------------------------------------------------
 # Testes de comportamento dos stubs (smoke — valida que retornam tipos corretos)
@@ -609,3 +745,45 @@ class TestStubBehavior:
         assert handle.gpu_index == 0
         await manager.wait_healthy(handle, timeout_s=60)
         await manager.stop(handle)
+
+    def test_stub_visualization_returns_figure_paths(self) -> None:
+        vis = _StubVisualization()
+        output_dir = Path("/tmp")
+        frame = _make_result_frame()
+        aggregates: list[ConfigAggregate] = []
+
+        fp_heat = vis.plot_rankscore_heatmap(aggregates, output_dir=output_dir)
+        fp_box = vis.plot_finalscore_boxplots(aggregates, output_dir=output_dir)
+        fp_inter = vis.plot_interaction(aggregates, output_dir=output_dir)
+        fp_radar = vis.plot_radar(aggregates, output_dir=output_dir)
+        fp_q = vis.plot_per_question_ranking(frame, output_dir=output_dir)
+        fp_fail = vis.plot_failure_breakdown(aggregates, output_dir=output_dir)
+
+        assert isinstance(fp_heat, FigurePath)
+        assert fp_heat.plot_type == "rankscore_heatmap"
+        assert isinstance(fp_box, FigurePath)
+        assert fp_box.plot_type == "finalscore_boxplot"
+        assert isinstance(fp_inter, FigurePath)
+        assert fp_inter.plot_type == "interaction"
+        assert isinstance(fp_radar, FigurePath)
+        assert fp_radar.plot_type == "radar"
+        assert isinstance(fp_q, FigurePath)
+        assert fp_q.plot_type == "per_question_ranking"
+        assert isinstance(fp_fail, FigurePath)
+        assert fp_fail.plot_type == "failure_breakdown"
+
+    def test_stub_report_returns_report_path(self) -> None:
+        report = _StubReport()
+        output_path = Path("/tmp/report.html")
+        rp = report.generate_html(
+            run_id="run-test",
+            aggregates=[],
+            results=_make_result_frame(),
+            stats_report=_make_stats_report(),
+            figure_paths=[],
+            output_path=output_path,
+        )
+        assert isinstance(rp, ReportPath)
+        assert rp.format == "html"
+        assert rp.run_id == "run-test"
+        assert rp.path == output_path
