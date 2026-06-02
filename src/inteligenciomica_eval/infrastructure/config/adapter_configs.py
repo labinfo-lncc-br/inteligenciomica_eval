@@ -14,7 +14,7 @@ Cada adapter de M2 recebe a sua própria config:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Defaults compartilhados (mantidos como literais aqui para evitar dependência
 # circular config → adapter; espelham as constantes do módulo do adapter).
@@ -135,3 +135,26 @@ class StatsAdapterConfig:
     correction_method: str = "benjamini-hochberg"
     min_pairs_wilcoxon: int = 5
     reml: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class VisualizationAdapterConfig:
+    """Configuração do :class:`MatplotlibVisualizationAdapter` (TAREFA-407, §11.4).
+
+    Args:
+        formats: lista de formatos de saída; ``"svg"`` sempre gerado;
+            ``"png"`` gerado adicionalmente se presente na lista.
+        dpi: resolução das figuras PNG (SVG é vetorial, dpi não se aplica).
+        figure_width: largura das figuras em polegadas.
+        figure_height: altura das figuras em polegadas.
+        failure_threshold: limiar de ``failure_rate`` para ``plot_failure_breakdown``
+            — configurações abaixo deste valor não são destacadas como falhas.
+        top_n_radar: número de configurações top-N exibidas no radar chart.
+    """
+
+    formats: list[str] = field(default_factory=lambda: ["svg"])
+    dpi: int = 150
+    figure_width: float = 10.0
+    figure_height: float = 6.0
+    failure_threshold: float = 0.20
+    top_n_radar: int = 5
