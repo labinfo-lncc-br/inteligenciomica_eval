@@ -1,4 +1,4 @@
-"""Testes unitários do subcomando `annotate --export` (TAREFA-401, ADR-010)."""
+"""Testes unitários dos subcomandos `annotate --export` e `annotate --ingest` (TAREFA-401/402, ADR-010)."""
 
 from __future__ import annotations
 
@@ -164,7 +164,9 @@ class TestAnnotateExport:
         assert result.exit_code == 0, result.output
         assert export_path.exists()
         lines = [
-            line for line in export_path.read_text(encoding="utf-8").splitlines() if line.strip()
+            line
+            for line in export_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         ]
         assert len(lines) == 6  # 4 below threshold + 2 NaN
 
@@ -244,7 +246,9 @@ class TestAnnotateExport:
 
         assert result.exit_code == 0, result.output
         lines = [
-            line for line in export_path.read_text(encoding="utf-8").splitlines() if line.strip()
+            line
+            for line in export_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         ]
         assert len(lines) == 3
 
@@ -478,10 +482,14 @@ class TestAnnotateExport:
             )
 
         rows_1 = [
-            json.loads(line) for line in export_path_1.read_text().splitlines() if line.strip()
+            json.loads(line)
+            for line in export_path_1.read_text().splitlines()
+            if line.strip()
         ]
         rows_2 = [
-            json.loads(line) for line in export_path_2.read_text().splitlines() if line.strip()
+            json.loads(line)
+            for line in export_path_2.read_text().splitlines()
+            if line.strip()
         ]
         assert [r["row_id"] for r in rows_1] == [r["row_id"] for r in rows_2]
 
@@ -501,7 +509,9 @@ class TestAnnotateExport:
             writer_a.append(
                 make_evaluation_result(
                     answer=make_generated_answer(
-                        row_id=make_row_id(run_id="run-a", question_id=f"qa{i}", llm="m", seed=i),
+                        row_id=make_row_id(
+                            run_id="run-a", question_id=f"qa{i}", llm="m", seed=i
+                        ),
                         question_id=f"qa{i}",
                         llm="m",
                         seed=i,
@@ -513,7 +523,9 @@ class TestAnnotateExport:
             writer_b.append(
                 make_evaluation_result(
                     answer=make_generated_answer(
-                        row_id=make_row_id(run_id="run-b", question_id=f"qb{i}", llm="m", seed=i),
+                        row_id=make_row_id(
+                            run_id="run-b", question_id=f"qb{i}", llm="m", seed=i
+                        ),
                         question_id=f"qb{i}",
                         llm="m",
                         seed=i,
@@ -543,7 +555,9 @@ class TestAnnotateExport:
 
         assert result.exit_code == 0, result.output
         lines = [
-            line for line in export_path.read_text(encoding="utf-8").splitlines() if line.strip()
+            line
+            for line in export_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         ]
         assert len(lines) == 3  # only run-a rows, not run-b
 
@@ -610,3 +624,181 @@ class TestAnnotateExport:
 
         assert result.exit_code == 1
         assert "storage" in result.output.lower() or "error" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests — annotate --ingest  (TAREFA-402)
+# ---------------------------------------------------------------------------
+
+
+def _make_writer(*row_ids: object) -> InMemoryResultWriter:
+    """Return an InMemoryResultWriter pre-loaded with synthetic rows for each row_id."""
+    from inteligenciomica_eval.domain.value_objects import RowId
+
+    store = InMemoryResultStore()
+    writer = InMemoryResultWriter(store, round_id=_ROUND_ID, run_id=_RUN_ID)
+    for i, row_id in enumerate(row_ids):
+        assert isinstance(row_id, RowId)
+        result = make_evaluation_result(
+            answer=make_generated_answer(
+                row_id=row_id,
+                question_id=f"qi{i:02d}",
+                llm="llama3-8b",
+                seed=i,
+            ),
+            final_score=0.4,
+        )
+        writer.append(result)
+    return writer
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+
+
+@pytest.mark.unit
+class TestAnnotateIngest:
+    """Tests for `ielm-eval annotate --ingest` (TAREFA-402)."""
+
+    def test_ingest_happy_path(
+        self,
+        config_path: Path,
+        tmp_path: Path,
+        mocker: MockerFixture,
+    ) -> None:
+        """Wiring: --ingest reaches _run_ingest_annotate, exit_code=0, summary table shown."""
+        row_id_0 = make_row_id(run_id=_RUN_ID, question_id="qi00", seed=0)
+        row_id_1 = make_row_id(run_id=_RUN_ID, question_id="qi01", seed=1)
+        writer = _make_writer(row_id_0, row_id_1)
+        mocker.patch(
+            "inteligenciomica_eval.infrastructure.factories.build_annotation_writer",
+            return_value=writer,
+        )
+
+        ingest_path = tmp_path / "annotations.jsonl"
+        _write_jsonl(
+            ingest_path,
+            [
+                {
+                    "row_id": row_id_0.value,
+                    "critical_failure_flag": 0,
+                    "critical_failure_note": "",
+                },
+                {
+                    "row_id": row_id_1.value,
+                    "critical_failure_flag": 1,
+                    "critical_failure_note": "erro crítico",
+                },
+            ],
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "annotate",
+                "--config",
+                str(config_path),
+                "--run-id",
+                _RUN_ID,
+                "--ingest",
+                str(ingest_path),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        # Summary table must mention "Ingeridas" (table row label) to confirm the ingest path
+        assert "ingeridas" in result.output.lower()
+        # Both rows were ingested — flag values stored
+        assert writer.current_annotation_flag(row_id_0) == 0
+        assert writer.current_annotation_flag(row_id_1) == 1
+
+    def test_ingest_force_overwrites_existing(
+        self,
+        config_path: Path,
+        tmp_path: Path,
+        mocker: MockerFixture,
+    ) -> None:
+        """--force overwrites already-annotated row; without --force the row is skipped."""
+        row_id = make_row_id(run_id=_RUN_ID, question_id="qi00", seed=0)
+        writer = _make_writer(row_id)
+        # Pre-annotate: flag=0
+        writer.update_annotation(
+            row_id, critical_failure_flag=0, critical_failure_note=""
+        )
+
+        ingest_path = tmp_path / "annotations.jsonl"
+        _write_jsonl(
+            ingest_path,
+            [
+                {
+                    "row_id": row_id.value,
+                    "critical_failure_flag": 1,
+                    "critical_failure_note": "override",
+                }
+            ],
+        )
+
+        mocker.patch(
+            "inteligenciomica_eval.infrastructure.factories.build_annotation_writer",
+            return_value=writer,
+        )
+
+        # Without --force: row is skipped, flag stays 0
+        result_no_force = runner.invoke(
+            app,
+            [
+                "annotate",
+                "--config",
+                str(config_path),
+                "--run-id",
+                _RUN_ID,
+                "--ingest",
+                str(ingest_path),
+            ],
+        )
+        assert result_no_force.exit_code == 0, result_no_force.output
+        assert writer.current_annotation_flag(row_id) == 0
+
+        # With --force: row is overwritten, flag becomes 1
+        result_force = runner.invoke(
+            app,
+            [
+                "annotate",
+                "--config",
+                str(config_path),
+                "--run-id",
+                _RUN_ID,
+                "--ingest",
+                str(ingest_path),
+                "--force",
+            ],
+        )
+        assert result_force.exit_code == 0, result_force.output
+        assert writer.current_annotation_flag(row_id) == 1
+
+    def test_ingest_file_not_found(
+        self,
+        config_path: Path,
+        tmp_path: Path,
+    ) -> None:
+        """--ingest with non-existent file: exit_code=1 and error message displayed."""
+        missing = tmp_path / "does_not_exist.jsonl"
+
+        result = runner.invoke(
+            app,
+            [
+                "annotate",
+                "--config",
+                str(config_path),
+                "--run-id",
+                _RUN_ID,
+                "--ingest",
+                str(missing),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert (
+            "encontrado" in result.output.lower()
+            or "not found" in result.output.lower()
+        )

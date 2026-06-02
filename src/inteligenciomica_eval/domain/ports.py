@@ -522,6 +522,46 @@ class ResultWriterPort(Protocol):
         """
         ...
 
+    def update_annotation(
+        self,
+        row_id: RowId,
+        *,
+        critical_failure_flag: int,
+        critical_failure_note: str = "",
+    ) -> None:
+        """Atualiza anotação humana de falha crítica (extensão de contrato M4 — ADR-010).
+
+        Delta de contrato declarado na Nota de operacionalização M4: método novo que
+        persiste exclusivamente os campos ``critical_failure_flag`` e
+        ``critical_failure_note`` sem tocar métricas ou proveniência.
+
+        Args:
+            row_id: identificador da linha a anotar.
+            critical_failure_flag: ``0`` (sem falha) ou ``1`` (falha crítica confirmada).
+            critical_failure_note: justificativa textual opcional do especialista.
+
+        Raises:
+            StorageError: se a linha não existe ou ocorrer falha de I/O.
+        """
+        ...
+
+    def current_annotation_flag(self, row_id: RowId) -> int | None:
+        """Retorna o valor atual de ``critical_failure_flag`` para verificação de idempotência (ADR-009).
+
+        Necessário para ``IngestHumanAnnotationUseCase`` decidir se deve pular ou
+        sobrescrever uma linha já anotada quando ``force=False``.
+
+        Args:
+            row_id: identificador da linha consultada.
+
+        Returns:
+            ``0``, ``1`` se já anotada; ``None`` se não anotada ou linha ausente.
+
+        Raises:
+            StorageError: em falha de I/O inesperada.
+        """
+        ...
+
 
 @runtime_checkable
 class ResultReaderPort(Protocol):

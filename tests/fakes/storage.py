@@ -117,6 +117,43 @@ class InMemoryResultWriter:
         """
         return row_id.value in self._store._rows
 
+    def update_annotation(
+        self,
+        row_id: RowId,
+        *,
+        critical_failure_flag: int,
+        critical_failure_note: str = "",
+    ) -> None:
+        """Persist annotation fields for an existing row (ADR-010, M4 delta).
+
+        Args:
+            row_id: identifier of the row to annotate.
+            critical_failure_flag: ``0`` or ``1``.
+            critical_failure_note: optional expert justification text.
+
+        Raises:
+            KeyError: if the row has not been appended yet.
+        """
+        stored = self._store._rows[row_id.value]
+        result = stored.result.with_human_annotation(
+            critical_failure_flag, critical_failure_note or None
+        )
+        self._store._rows[row_id.value] = dataclasses.replace(stored, result=result)
+
+    def current_annotation_flag(self, row_id: RowId) -> int | None:
+        """Return the current ``critical_failure_flag``, or ``None`` if not set.
+
+        Args:
+            row_id: identifier to look up.
+
+        Returns:
+            ``0``, ``1``, or ``None`` when absent or not yet annotated.
+        """
+        row = self._store._rows.get(row_id.value)
+        if row is None:
+            return None
+        return row.result.critical_failure_flag
+
 
 class InMemoryResultReader:
     """In-memory ResultReaderPort reading from a shared InMemoryResultStore.

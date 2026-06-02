@@ -256,6 +256,13 @@ def annotate(
             help="Ingest expert-annotated JSONL back into Parquet (TAREFA-402).",
         ),
     ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force/--no-force",
+            help="Re-ingest rows already annotated (overwrites existing flag).",
+        ),
+    ] = False,
     threshold: Annotated[
         float,
         typer.Option(
@@ -345,10 +352,18 @@ def annotate(
 
     # ------------------------------------------------------------------ M4 ingest
     if ingest_path is not None:
-        _err_console.print(
-            "[yellow]--ingest será implementado na TAREFA-402 (M4).[/yellow]"
-        )
-        raise typer.Exit(1)
+        try:
+            _run_ingest_annotate(
+                config=config,
+                run_id=run_id,
+                ingest_path=ingest_path,
+                force=force,
+            )
+        except KeyboardInterrupt:
+            _log.info("ingest_annotate_interrupted", run_id=run_id)
+            _err_console.print("\n[yellow]Interrupted.[/yellow]")
+            raise typer.Exit(130) from None
+        return
 
     # ------------------------------------------------------------------ M3 mode
     if data_dir is None:
@@ -539,6 +554,66 @@ def _run_export_annotate(
         )
     )
     _console.print(f"[green]Exportado para:[/green] {export_path}")
+
+
+def _run_ingest_annotate(
+    *,
+    config: Path,
+    run_id: str,
+    ingest_path: Path,
+    force: bool,
+) -> None:
+    """Ingere anotações humanas de um JSONL para o Parquet (TAREFA-402, ADR-010).
+
+    Args:
+        config: caminho para o YAML de configuração da rodada.
+        run_id: identificador do run.
+        ingest_path: caminho do JSONL editado pelo especialista.
+        force: se ``True``, sobrescreve anotações já existentes.
+    """
+    from rich.table import Table
+
+    from inteligenciomica_eval.application.use_cases.ingest_annotation import (
+        IngestAnnotationInput,
+        IngestHumanAnnotationUseCase,
+    )
+    from inteligenciomica_eval.domain.errors import ConfigValidationError, StorageError
+    from inteligenciomica_eval.infrastructure.factories import build_annotation_writer
+
+    if not ingest_path.exists():
+        _err_console.print(f"[red]Arquivo não encontrado:[/red] {ingest_path}")
+        raise typer.Exit(1)
+
+    try:
+        writer = build_annotation_writer(config, run_id=run_id)
+    except FileNotFoundError as exc:
+        _err_console.print(f"[red]Config não encontrado:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ConfigValidationError as exc:
+        _err_console.print(f"[red]Configuração inválida:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    try:
+        uc = IngestHumanAnnotationUseCase(writer=writer)
+        result = uc.execute(
+            IngestAnnotationInput(
+                annotations_path=ingest_path,
+                run_id=run_id,
+                force=force,
+            )
+        )
+    except StorageError as exc:
+        _err_console.print(f"[red]Storage error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    table = Table(title="annotate --ingest")
+    table.add_column("Categoria", style="bold")
+    table.add_column("Contagem", justify="right")
+    table.add_row("[green]Ingeridas[/green]", str(result.n_ingested))
+    table.add_row("[yellow]Puladas (já anotadas)[/yellow]", str(result.n_skipped))
+    table.add_row("[red]Inválidas (flag ∉ {0,1,null})[/red]", str(result.n_invalid))
+    table.add_row("[red]row_id não encontrado[/red]", str(result.n_missing_row_id))
+    _console.print(table)
 
 
 def _run_batch_annotate(

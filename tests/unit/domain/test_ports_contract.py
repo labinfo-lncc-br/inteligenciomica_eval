@@ -194,6 +194,18 @@ class _StubResultWriter:
     def exists(self, row_id: RowId) -> bool:
         return False
 
+    def update_annotation(
+        self,
+        row_id: RowId,
+        *,
+        critical_failure_flag: int,
+        critical_failure_note: str = "",
+    ) -> None:
+        pass
+
+    def current_annotation_flag(self, row_id: RowId) -> int | None:
+        return None
+
 
 class _StubResultReader:
     def load(self, *, round_id: str, phase: str | None = None) -> ResultFrame:

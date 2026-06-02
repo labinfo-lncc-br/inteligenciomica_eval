@@ -520,6 +520,86 @@ class ParquetStorage:
         except Exception as exc:
             raise StorageError("update_metrics", _safe_msg(exc)) from exc
 
+    def update_annotation(
+        self,
+        row_id: RowId,
+        *,
+        critical_failure_flag: int,
+        critical_failure_note: str = "",
+    ) -> None:
+        """Update only the annotation columns for an existing row (ADR-010, M4 delta).
+
+        Reads the Parquet file for ``row_id``, overwrites ``critical_failure_flag``
+        and ``critical_failure_note``, and writes the file back.  All other columns
+        (metrics, provenance, answer) are left unchanged.
+
+        Args:
+            row_id: identifier of the row to annotate.
+            critical_failure_flag: ``0`` (no failure) or ``1`` (critical failure).
+            critical_failure_note: optional expert justification text.
+
+        Raises:
+            StorageError: if the row does not exist or on I/O failure.
+        """
+        try:
+            file_path = self._find_file(row_id.value)
+            if file_path is None:
+                raise StorageError(
+                    "update_annotation",
+                    f"Row {row_id.value[:12]}… not found — run append first",
+                )
+            table = pq.ParquetFile(file_path).read()
+            update_values: dict[str, list[Any]] = {
+                "critical_failure_flag": [critical_failure_flag],
+                "critical_failure_note": [
+                    critical_failure_note if critical_failure_note else None
+                ],
+            }
+            for col_name, values in update_values.items():
+                col_idx = table.schema.get_field_index(col_name)
+                pa_type = EVAL_SCHEMA.field(col_name).type
+                table = table.set_column(
+                    col_idx, col_name, pa.array(values, type=pa_type)
+                )
+            pq.write_table(table, file_path)
+            self._log.info(
+                "annotation_updated",
+                row_id=row_id.value[:12],
+                flag=critical_failure_flag,
+            )
+        except StorageError:
+            raise
+        except Exception as exc:
+            raise StorageError("update_annotation", _safe_msg(exc)) from exc
+
+    def current_annotation_flag(self, row_id: RowId) -> int | None:
+        """Return the stored ``critical_failure_flag`` value, or ``None`` if absent.
+
+        Args:
+            row_id: identifier to look up.
+
+        Returns:
+            ``0`` or ``1`` if annotated; ``None`` if the row is absent or not yet
+            annotated (int8 NULL in Parquet).
+
+        Raises:
+            StorageError: on unexpected I/O errors.
+        """
+        try:
+            file_path = self._find_file(row_id.value)
+            if file_path is None:
+                return None
+            table = pq.ParquetFile(file_path).read(columns=["critical_failure_flag"])
+            col = table.column("critical_failure_flag")
+            if len(col) == 0:
+                return None
+            val = col[0].as_py()
+            return int(val) if val is not None else None
+        except StorageError:
+            raise
+        except Exception as exc:
+            raise StorageError("current_annotation_flag", _safe_msg(exc)) from exc
+
     def exists(self, row_id: RowId) -> bool:
         """Return True if the row exists and its generated_answer is non-null.
 
