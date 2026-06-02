@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório InteligenciÔmica — {{ run_id }}</title>
+<style>
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    margin: 0;
+    padding: 2rem;
+    background: #f9f9f9;
+    color: #222;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  h1 { font-size: 1.8rem; color: #1a1a2e; border-bottom: 3px solid #e63946; padding-bottom: 0.5rem; }
+  h2 { font-size: 1.3rem; color: #16213e; margin-top: 2rem; border-left: 4px solid #457b9d; padding-left: 0.7rem; }
+  section { background: #fff; border-radius: 6px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th { background: #1d3557; color: #fff; padding: 0.5rem 0.8rem; text-align: left; }
+  td { padding: 0.45rem 0.8rem; border-bottom: 1px solid #e0e0e0; }
+  tr:nth-child(even) td { background: #f0f4f8; }
+  tr.best-config td { background: #d4edda; font-weight: bold; }
+  .placeholder { background: #fef3cd; border: 1px dashed #aaa; padding: 0.5rem; text-align: center; color: #666; font-style: italic; border-radius: 4px; margin: 0.5rem 0; }
+  .figure-block { margin-bottom: 1.5rem; }
+  .figure-block img { max-width: 100%; border: 1px solid #ddd; border-radius: 4px; display: block; }
+  .figure-caption { font-size: 0.8rem; color: #555; margin-top: 0.3rem; }
+  .meta { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; }
+  .highlight { color: #e63946; font-weight: bold; }
+  .nota { font-size: 0.85rem; background: #eef2f7; border-left: 3px solid #457b9d; padding: 0.8rem 1rem; border-radius: 0 4px 4px 0; }
+</style>
+</head>
+<body>
+
+<section id="cabecalho">
+  <h1>Relatório Executivo — InteligenciÔmica Eval</h1>
+  <p class="meta"><strong>Run ID:</strong> {{ run_id }}</p>
+  <p class="meta"><strong>Gerado em:</strong> {{ generation_ts }}</p>
+  <p class="meta"><strong>Configurações avaliadas:</strong> {{ n_configs }}</p>
+  <p class="meta"><strong>Perguntas avaliadas:</strong> {{ n_questions }}</p>
+</section>
+
+<section id="ranking-executivo">
+  <h2>Ranking Executivo</h2>
+  {% if aggregates_table %}
+  <table id="ranking-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Configuração (base/LLM)</th>
+        <th>RankScore</th>
+        <th>Mediana</th>
+        <th>Falhas</th>
+        <th>Win Rate</th>
+        <th>Falhas Críticas</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in aggregates_table %}
+      <tr{% if loop.first %} class="best-config"{% endif %}>
+        <td>{{ loop.index }}</td>
+        <td>{{ row.config }}</td>
+        <td>{{ row.rank_score }}</td>
+        <td>{{ row.median_score }}</td>
+        <td>{{ row.failure_rate }}</td>
+        <td>{{ row.win_rate }}</td>
+        <td>{{ row.critical_failure_rate }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="placeholder">Nenhum agregado disponível.</p>
+  {% endif %}
+</section>
+
+<section id="visualizacoes">
+  <h2>Visualizações</h2>
+  {% for fig in figures %}
+  <div class="figure-block">
+    <p class="figure-caption"><strong>{{ fig.plot_type }}</strong></p>
+    {% if fig.available %}
+    <img src="{{ fig.src }}" alt="Plot: {{ fig.plot_type }}">
+    {% else %}
+    <p class="placeholder">[Figura indisponível: {{ fig.plot_type }}]</p>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="placeholder">Nenhuma figura disponível.</p>
+  {% endfor %}
+</section>
+
+<section id="resultados-estatisticos">
+  <h2>Resultados Estatísticos</h2>
+  <table>
+    <thead>
+      <tr><th>Campo</th><th>Valor</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Run ID</td><td>{{ stats_summary.run_id }}</td></tr>
+      <tr><td>Rodada</td><td>{{ stats_summary.round_id }}</td></tr>
+      <tr><td>Método de correção</td><td>{{ stats_summary.correction_method }}</td></tr>
+      <tr><td>Nível de significância (α)</td><td>{{ stats_summary.alpha }}</td></tr>
+      <tr><td>Diferença entre bases (Wilcoxon)</td><td>{{ stats_summary.base_difference_significant }}</td></tr>
+      <tr><td>Diferença entre LLMs (Friedman)</td><td>{{ stats_summary.llm_difference_significant }}</td></tr>
+      <tr><td>Interação base×LLM (MLM)</td><td>{{ stats_summary.interaction_significant }}</td></tr>
+      <tr><td>Melhor LLM (Friedman/Nemenyi)</td><td>{{ stats_summary.top_llm_by_friedman }}</td></tr>
+      <tr><td>Testes Wilcoxon executados</td><td>{{ stats_summary.n_wilcoxon_tests }}</td></tr>
+      <tr><td>Testes Friedman executados</td><td>{{ stats_summary.n_friedman_tests }}</td></tr>
+      <tr><td>Modelos MLM executados</td><td>{{ stats_summary.n_mlm_tests }}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="nota-metodologica">
+  <h2>Nota Metodológica</h2>
+  <div class="nota">
+    <p>Este relatório foi gerado pelo sistema de avaliação InteligenciÔmica Eval seguindo
+    o protocolo OFAT (One Factor At a Time): cada rodada varia uma única dimensão
+    (base de conhecimento ou LLM) mantendo as demais fixas.</p>
+    <p>O conjunto de avaliação é composto por <strong>n=13 perguntas biomédicas</strong>
+    curadas e versionadas. A análise estatística foi executada sobre o Experimento A
+    (variação de base e LLM).</p>
+    <p>Determinismo do juiz: o LLM-juiz opera com
+    <strong>VLLM_BATCH_INVARIANT=1</strong> e <strong>temperatura 0,0</strong> —
+    garantindo reproducibilidade dos scores de rubrica entre execuções.</p>
+    <p>Geradores operam em <strong>modo realista</strong> (sem batch invariance),
+    com temperatura e seed configuráveis por rodada, conforme ADR-003.</p>
+    <p>Correção para múltiplos testes: método Benjamini-Hochberg (FDR) aplicado
+    conjuntamente aos testes de Wilcoxon e Friedman. Modelos MLM analisados
+    separadamente (testam hipóteses de interação distintas).</p>
+  </div>
+</section>
+
+</body>
+</html>

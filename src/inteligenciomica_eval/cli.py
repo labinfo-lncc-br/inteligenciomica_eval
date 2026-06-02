@@ -729,6 +729,378 @@ def _run_interactive_annotate(
     )
 
 
+@app.command()
+def analyze(
+    run_id: Annotated[str, typer.Option("--run-id", help="Run identifier.")],
+    round_id: Annotated[
+        str | None,
+        typer.Option("--round-id", help="Round identifier (overrides config)."),
+    ] = None,
+    config: Annotated[
+        Path, typer.Option("--config", help="Path to round config YAML.")
+    ] = Path("round_config.yaml"),
+    tests: Annotated[
+        str,
+        typer.Option(
+            "--tests",
+            help="Tests to run: wilcoxon | friedman | mlm | all.",
+        ),
+    ] = "all",
+    metric: Annotated[
+        str,
+        typer.Option(
+            "--metric",
+            help="Metric to test (final_score, answer_correctness, ...).",
+        ),
+    ] = "final_score",
+) -> None:
+    """Run statistical analysis and print a summary table.
+
+    Delegates to ``StatisticalAnalysisUseCase`` built from the round config.
+    Prints p-values, significance flags and top LLM via ``rich.table``.
+    """
+    from rich.table import Table
+
+    from inteligenciomica_eval.application.statistical_analysis import StatisticsInput
+    from inteligenciomica_eval.domain.errors import ConfigValidationError, StorageError
+    from inteligenciomica_eval.infrastructure.config.schema import load_round_config
+    from inteligenciomica_eval.infrastructure.factories import (
+        build_analysis_from_config,
+    )
+
+    try:
+        cfg = load_round_config(config)
+    except FileNotFoundError as exc:
+        _err_console.print(f"[red]Config não encontrado:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ConfigValidationError as exc:
+        _err_console.print(f"[red]Configuração inválida:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    effective_round_id = round_id if round_id is not None else cfg.round_id
+
+    valid_tests = {"wilcoxon", "friedman", "mlm", "all"}
+    if tests not in valid_tests:
+        _err_console.print(
+            f"[red]--tests inválido:[/red] {tests!r}. Escolha: wilcoxon | friedman | mlm | all."
+        )
+        raise typer.Exit(1)
+
+    try:
+        uc = build_analysis_from_config(config)
+        inp = StatisticsInput(
+            run_id=run_id,
+            round_id=effective_round_id,
+            metrics=(metric,),
+            tests=(tests,),
+        )
+        report = uc.execute(inp)
+    except StorageError as exc:
+        _err_console.print(f"[red]Storage error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    table = Table(title=f"Análise estatística — {run_id}")
+    table.add_column("Campo", style="bold")
+    table.add_column("Valor")
+    table.add_row("Rodada", report.round_id)
+    table.add_row("Correção", report.correction_method)
+    table.add_row("Alpha", str(report.alpha))
+    table.add_row(
+        "Base significativa (Wilcoxon)", str(report.base_difference_significant)
+    )
+    table.add_row(
+        "LLM significativo (Friedman)", str(report.llm_difference_significant)
+    )
+    table.add_row("Interacao base x LLM (MLM)", str(report.interaction_significant))
+    table.add_row(
+        "Melhor LLM (Friedman/Nemenyi)", str(report.top_llm_by_friedman or "N/A")
+    )
+    _console.print(table)
+
+    data_dir = config.parent / "data"
+    stats_file = data_dir / f"{run_id}_{effective_round_id}_stats.json"
+    _console.print(f"\n[green]Stats JSON salvo em:[/green] {stats_file}")
+
+
+@app.command()
+def report(
+    run_id: Annotated[str, typer.Option("--run-id", help="Run identifier.")],
+    round_id: Annotated[
+        str | None,
+        typer.Option("--round-id", help="Round identifier (overrides config)."),
+    ] = None,
+    config: Annotated[
+        Path, typer.Option("--config", help="Path to round config YAML.")
+    ] = Path("round_config.yaml"),
+    format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: html (default) or pdf."),
+    ] = "html",
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Output directory for report and plots."),
+    ] = Path("reports"),
+) -> None:
+    """Generate plots and HTML executive report for a run.
+
+    Produces 6 canonical plots via ``MatplotlibVisualizationAdapter`` and a
+    single HTML report via ``HTMLReportAdapter``.  Use ``--format pdf`` to see
+    a friendly message about future PDF support.
+    """
+    from rich.panel import Panel
+
+    from inteligenciomica_eval.application.aggregate_results import (
+        AggregateResultsInput,
+        AggregateResultsUseCase,
+    )
+    from inteligenciomica_eval.application.statistical_analysis import StatisticsInput
+    from inteligenciomica_eval.domain.errors import ConfigValidationError, StorageError
+    from inteligenciomica_eval.domain.services.aggregation import AggregationService
+    from inteligenciomica_eval.domain.services.rank_score import (
+        DEFAULT_WEIGHTS,
+        RankScoreCalculator,
+    )
+    from inteligenciomica_eval.infrastructure.config.schema import load_round_config
+    from inteligenciomica_eval.infrastructure.factories import (
+        build_analysis_from_config,
+        build_report_adapter,
+        build_visualization_adapter,
+    )
+    from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
+        ParquetStorage,
+    )
+
+    if format == "pdf":
+        _console.print(
+            "[yellow]Formato PDF reservado para versão futura. "
+            "Use --format html (padrão).[/yellow]"
+        )
+        return
+
+    if format != "html":
+        _err_console.print(
+            f"[red]Formato desconhecido:[/red] {format!r}. Opções: html | pdf."
+        )
+        raise typer.Exit(1)
+
+    try:
+        cfg = load_round_config(config)
+    except FileNotFoundError as exc:
+        _err_console.print(f"[red]Config não encontrado:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ConfigValidationError as exc:
+        _err_console.print(f"[red]Configuração inválida:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    effective_round_id = round_id if round_id is not None else cfg.round_id
+    data_dir = config.parent / "data"
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        storage = ParquetStorage(base_dir=data_dir, round_id=effective_round_id)
+        frame = storage.load(round_id=effective_round_id, run_id=run_id)
+    except StorageError as exc:
+        _err_console.print(f"[red]Storage error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    # Aggregate
+    agg_uc = AggregateResultsUseCase(
+        reader=storage,
+        aggregation_service=AggregationService(
+            rank_calculator=RankScoreCalculator(weights=DEFAULT_WEIGHTS)
+        ),
+        data_dir=data_dir,
+    )
+    try:
+        agg_out = agg_uc.execute(
+            AggregateResultsInput(run_id=run_id, round_id=effective_round_id, phase="A")
+        )
+    except StorageError as exc:
+        _err_console.print(f"[red]Aggregation error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    # Statistical analysis
+    try:
+        analysis_uc = build_analysis_from_config(config)
+        stats_report = analysis_uc.execute(
+            StatisticsInput(run_id=run_id, round_id=effective_round_id)
+        )
+    except (StorageError, Exception) as exc:
+        _err_console.print(
+            f"[yellow]Aviso — análise estatística falhou:[/yellow] {exc}"
+        )
+        # Continue without stats — use empty report
+        from inteligenciomica_eval.domain.value_objects import StatsReport
+
+        stats_report = StatsReport(
+            run_id=run_id,
+            round_id=effective_round_id,
+            wilcoxon_reports=(),
+            friedman_reports=(),
+            mlm_reports=(),
+            correction_method="benjamini-hochberg",
+            alpha=0.05,
+            base_difference_significant=False,
+            llm_difference_significant=False,
+            interaction_significant=False,
+            top_llm_by_friedman=None,
+        )
+
+    # Generate plots
+    viz = build_visualization_adapter(config)
+    aggregates = list(agg_out.aggregates)
+
+    figure_paths = [
+        viz.plot_rankscore_heatmap(aggregates, output_dir=plots_dir),
+        viz.plot_finalscore_boxplots(aggregates, output_dir=plots_dir, results=frame),
+        viz.plot_interaction(aggregates, output_dir=plots_dir),
+        viz.plot_radar(aggregates, output_dir=plots_dir),
+        viz.plot_per_question_ranking(frame, output_dir=plots_dir),
+        viz.plot_failure_breakdown(aggregates, output_dir=plots_dir),
+    ]
+
+    # Generate HTML report
+    html_path = output_dir / f"{run_id}_report.html"
+    reporter = build_report_adapter(config)
+    report_path = reporter.generate_html(
+        run_id=run_id,
+        aggregates=aggregates,
+        results=frame,
+        stats_report=stats_report,
+        figure_paths=figure_paths,
+        output_path=html_path,
+    )
+
+    fig_list = "\n".join(f"  • {fp.path}" for fp in figure_paths)
+    _console.print(
+        Panel(
+            f"[bold]Relatório HTML:[/bold] {report_path.path}\n\n"
+            f"[bold]Figuras geradas:[/bold]\n{fig_list}",
+            title="ielm-eval report",
+        )
+    )
+
+
+@app.command()
+def status(
+    run_id: Annotated[str, typer.Option("--run-id", help="Run identifier.")],
+    config: Annotated[
+        Path, typer.Option("--config", help="Path to round config YAML.")
+    ] = Path("round_config.yaml"),
+) -> None:
+    """Show status summary for a run: counts of results, annotations, best config.
+
+    Prints via ``rich.table``. If the run does not exist, prints a friendly
+    message and exits with code 0 (no traceback).
+    """
+    import math
+
+    from rich.table import Table
+
+    from inteligenciomica_eval.domain.errors import ConfigValidationError, StorageError
+    from inteligenciomica_eval.infrastructure.config.schema import load_round_config
+    from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
+        ParquetStorage,
+    )
+
+    try:
+        cfg = load_round_config(config)
+    except FileNotFoundError:
+        _console.print(
+            f"[yellow]Config não encontrado: {config} — não é possível verificar status.[/yellow]"
+        )
+        raise typer.Exit(0) from None
+    except ConfigValidationError:
+        _console.print(
+            f"[yellow]Config inválido: {config} — não é possível verificar status.[/yellow]"
+        )
+        raise typer.Exit(0) from None
+
+    data_dir = config.parent / "data"
+    storage = ParquetStorage(base_dir=data_dir, round_id=cfg.round_id)
+
+    try:
+        frame = storage.load(round_id=cfg.round_id, run_id=run_id)
+    except StorageError:
+        _console.print(
+            f"[yellow]Run '{run_id}' não encontrado na rodada '{cfg.round_id}'. "
+            "Nenhuma avaliação registrada.[/yellow]"
+        )
+        raise typer.Exit(0) from None
+
+    results = frame.results
+    n_total = len(results)
+    n_valid = sum(1 for r in results if not math.isnan(r.final_score.value))
+    n_nan = n_total - n_valid
+    n_annotated = sum(1 for r in results if r.critical_failure_flag is not None)
+    n_not_annotated = n_total - n_annotated
+
+    # Melhor config — tenta calcular agregados; N/A se não disponível
+    best_config_label = "N/A"
+    try:
+        from inteligenciomica_eval.domain.services.aggregation import AggregationService
+        from inteligenciomica_eval.domain.services.rank_score import (
+            DEFAULT_WEIGHTS,
+            RankScoreCalculator,
+        )
+
+        agg_svc = AggregationService(
+            rank_calculator=RankScoreCalculator(weights=DEFAULT_WEIGHTS)
+        )
+        aggregates = agg_svc.aggregate_all(
+            list(results), threshold=cfg.scoring.failure_threshold
+        )
+        if aggregates:
+            best = max(aggregates, key=lambda a: a.rank_score.value)
+            best_config_label = (
+                f"{best.base.value}/{best.llm.value} "
+                f"(rank_score={best.rank_score.value:.3f})"
+            )
+    except (
+        Exception
+    ):  # degradação graciosa: status nunca falha por ausência de agregados
+        pass
+
+    table = Table(title=f"Status — run_id={run_id!r} | round={cfg.round_id!r}")
+    table.add_column("Campo", style="bold")
+    table.add_column("Valor", justify="right")
+    table.add_row("Total de resultados", str(n_total))
+    table.add_row("Com final_score válido", str(n_valid))
+    table.add_row("Com final_score NaN", str(n_nan))
+    table.add_row("Com anotação crítica", str(n_annotated))
+    table.add_row("Sem anotação", str(n_not_annotated))
+    table.add_row("Melhor config", best_config_label)
+    _console.print(table)
+
+
+@app.command(name="show-config")
+def show_config(
+    config: Annotated[
+        Path, typer.Option("--config", help="Path to round config YAML.")
+    ],
+) -> None:
+    """Load, validate and pretty-print a round config YAML.
+
+    Exits with code 1 and a friendly message on validation errors (no traceback).
+    """
+    from rich.pretty import pprint
+
+    from inteligenciomica_eval.domain.errors import ConfigValidationError
+    from inteligenciomica_eval.infrastructure.config.schema import load_round_config
+
+    try:
+        cfg = load_round_config(config)
+    except FileNotFoundError as exc:
+        _err_console.print(f"[red]Config não encontrado:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ConfigValidationError as exc:
+        _err_console.print(f"[red]Configuração inválida:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    pprint(cfg)
+
+
 def main() -> None:
     """CLI entry point wrapper with explicit KeyboardInterrupt handling."""
     try:
