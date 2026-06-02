@@ -1,0 +1,73 @@
+{
+  "run_id": "e2e_m4_gate_run",
+  "round_id": "round_1",
+  "wilcoxon_reports": [
+    {
+      "metric": "final_score",
+      "base_a": "ID_230K",
+      "base_b": "IDx_400k",
+      "statistic": 0.0,
+      "p_value": 0.0313,
+      "p_value_corrected": 0.0313,
+      "significant": true,
+      "n_pairs": 5,
+      "effect_size_r": 0.636
+    }
+  ],
+  "friedman_reports": [
+    {
+      "metric": "final_score",
+      "chi2_statistic": 9.6,
+      "p_value": 0.0082,
+      "p_value_corrected": 0.0082,
+      "significant": true,
+      "n_groups": 3,
+      "n_blocks": 9,
+      "nemenyi_pairs": [
+        {
+          "llm_a": "llm-alpha",
+          "llm_b": "llm-beta",
+          "p_value": 0.001,
+          "significant": true,
+          "winner": "llm-alpha"
+        },
+        {
+          "llm_a": "llm-alpha",
+          "llm_b": "llm-gamma",
+          "p_value": 0.0008,
+          "significant": true,
+          "winner": "llm-alpha"
+        },
+        {
+          "llm_a": "llm-beta",
+          "llm_b": "llm-gamma",
+          "p_value": 0.042,
+          "significant": true,
+          "winner": "llm-beta"
+        }
+      ]
+    }
+  ],
+  "mlm_reports": [
+    {
+      "formula": "final_score ~ base * llm + (1 | question_id)",
+      "base_effect_coef": -0.115,
+      "base_effect_p_value": 0.021,
+      "llm_effect_p_values": {
+        "llm-beta": 0.003,
+        "llm-gamma": 0.0008
+      },
+      "interaction_p_value": 0.21,
+      "interaction_significant": false,
+      "aic": -22.4,
+      "n_observations": 29,
+      "convergence_warning": false
+    }
+  ],
+  "correction_method": "benjamini-hochberg",
+  "alpha": 0.05,
+  "base_difference_significant": true,
+  "llm_difference_significant": true,
+  "interaction_significant": false,
+  "top_llm_by_friedman": "llm-alpha"
+}
