@@ -31,10 +31,15 @@ class JudgeValidationConfig:
             ``judge_binary = 1 if rubric_biomed_score < threshold else 0``.
         min_sample_size: mínimo de amostras válidas exigido; levanta
             ``InsufficientAnnotationError`` se ``n_valid < min_sample_size``.
+        judge_model: nome do modelo juiz (fornecido pelo chamador a partir do
+            round config, pois ``EvaluationResult`` não carrega proveniência do
+            juiz via ``ResultReaderPort``). Padrão ``"unknown"`` quando não
+            disponível na config da rodada.
     """
 
     binarization_threshold: float = 0.50
     min_sample_size: int = 10
+    judge_model: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -129,23 +134,13 @@ class JudgeValidationUseCase:
 
         n_total = len(results)
         threshold = self._config.binarization_threshold
+        # judge_model vem de JudgeValidationConfig (fornecido pelo chamador via round config).
+        # EvaluationResult não carrega proveniência do juiz via ResultReaderPort — seria
+        # necessário estender o port ou ler o Parquet diretamente, o que viola a camada.
+        judge_model = self._config.judge_model
 
-        # --- Coletar modelos e verificar batch_invariant ---
-        judge_models: set[str] = set()
-        batch_invariant_flags: list[bool] = []
-        for r in results:
-            judge_models.add(r.answer.llm.value)
-            batch_invariant_flags.append(r.batch_invariant)
-
-        judge_model = ", ".join(sorted(judge_models)) if judge_models else "unknown"
-        if len(judge_models) > 1:
-            _log.warning(
-                "judge_validation_multiple_models",
-                models=sorted(judge_models),
-                run_id=run_id,
-                round_id=round_id,
-            )
-
+        # --- Verificar batch_invariant ---
+        batch_invariant_flags: list[bool] = [r.batch_invariant for r in results]
         batch_invariant_confirmed = (
             all(batch_invariant_flags) if batch_invariant_flags else False
         )

@@ -15,17 +15,28 @@ from inteligenciomica_eval.domain.ports import KappaCalculatorPort, ResultFrame
 from inteligenciomica_eval.domain.value_objects import DeterminismRegime
 
 # ---------------------------------------------------------------------------
-# Fake KappaCalculator — usa sklearn real
+# Fake KappaCalculator — implementação matemática pura (sem sklearn)
 # ---------------------------------------------------------------------------
 
 
 class _FakeKappa:
-    """Adapter fake que chama sklearn.metrics.cohen_kappa_score real."""
+    """Implementa KappaCalculatorPort com cálculo matemático direto do κ.
+
+    Não importa sklearn — os testes de use case não devem depender de
+    infrastructure/stats/ (Nota M6 item 5).
+    """
 
     def compute(self, y_true: list[int], y_pred: list[int]) -> float:
-        from sklearn.metrics import cohen_kappa_score
-
-        return float(cohen_kappa_score(y_true, y_pred))
+        n = len(y_true)
+        if n == 0:
+            return 0.0
+        po = sum(a == b for a, b in zip(y_true, y_pred, strict=True)) / n
+        p_true_pos = sum(y_true) / n
+        p_pred_pos = sum(y_pred) / n
+        pe = p_true_pos * p_pred_pos + (1 - p_true_pos) * (1 - p_pred_pos)
+        if pe == 1.0:
+            return 1.0
+        return (po - pe) / (1.0 - pe)
 
 
 assert isinstance(_FakeKappa(), KappaCalculatorPort)
@@ -83,6 +94,7 @@ def _make_uc(
     *,
     threshold: float = 0.50,
     min_sample: int = 10,
+    judge_model: str = "prometheus-test",
 ) -> JudgeValidationUseCase:
     return JudgeValidationUseCase(
         reader=_make_reader(results),
@@ -90,6 +102,7 @@ def _make_uc(
         config=JudgeValidationConfig(
             binarization_threshold=threshold,
             min_sample_size=min_sample,
+            judge_model=judge_model,
         ),
     )
 
@@ -153,6 +166,14 @@ class TestGoldenDataset:
         result = uc.run(RUN_ID, ROUND_ID)
         assert result.binarization_threshold == 0.50
 
+    def test_judge_model_from_config_not_from_evaluated_llm(self) -> None:
+        # judge_model deve vir de JudgeValidationConfig, não de r.answer.llm.value
+        uc = _make_uc(_GOLDEN_RESULTS, judge_model="prometheus-2-8x7b-rc")
+        result = uc.run(RUN_ID, ROUND_ID)
+        assert result.judge_model == "prometheus-2-8x7b-rc"
+        # garante que não retornou o llm avaliado ("llama3-8b" é o default do factory)
+        assert "llama3-8b" not in result.judge_model
+
 
 class TestNExcludedNan:
     def test_nan_rows_excluded_and_counted(self) -> None:
@@ -196,8 +217,8 @@ class TestBatchInvariant:
         result = uc.run(RUN_ID, ROUND_ID)
         assert result.batch_invariant_confirmed is True
 
-    def test_confirmed_false_when_any_generator(self) -> None:
-        results = (
+    def _non_invariant_results(self) -> list:
+        return (
             [_make_result(rubric_score=0.20, flag=1) for _ in range(8)]
             + [_make_result(rubric_score=0.80, flag=1) for _ in range(2)]
             + [_make_result(rubric_score=0.80, flag=0) for _ in range(7)]
@@ -210,9 +231,25 @@ class TestBatchInvariant:
                 for _ in range(3)
             ]
         )
-        uc = _make_uc(results)
+
+    def test_confirmed_false_when_any_generator(self) -> None:
+        uc = _make_uc(self._non_invariant_results())
         result = uc.run(RUN_ID, ROUND_ID)
         assert result.batch_invariant_confirmed is False
+
+    def test_warning_logged_when_non_deterministic(
+        self, mocker: pytest.FixtureRequest
+    ) -> None:
+        # structlog não usa pipeline do logging padrão — mock direto em _log.warning
+        warn_mock = mocker.patch(
+            "inteligenciomica_eval.application.judge_validation._log.warning"
+        )
+        uc = _make_uc(self._non_invariant_results())
+        result = uc.run(RUN_ID, ROUND_ID)
+        assert result.batch_invariant_confirmed is False
+        # Verifica que warning foi chamado com o evento correto
+        event_names = [call.args[0] for call in warn_mock.call_args_list]
+        assert "judge_validation_non_deterministic" in event_names
 
 
 # ---------------------------------------------------------------------------
