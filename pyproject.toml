@@ -177,6 +177,8 @@ markers = [
     "integration: Integration tests — real adapters, containers",
     "e2e: End-to-end tests — full-stack, slow",
     "contract: Contract tests — cross-layer invariants, no network/GPU",
+    "property: Property-based tests (hypothesis) — parsers, serializers, invariants",
+    "security: Security tests — injection, malicious inputs, secret scanning",
 ]
 
 # ---------------------------------------------------------------------------
