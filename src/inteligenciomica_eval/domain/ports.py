@@ -816,6 +816,34 @@ class VisualizationPort(Protocol):
 
 
 @runtime_checkable
+class KappaCalculatorPort(Protocol):
+    """Calcula a concordância entre dois rótulos binários (Cohen's κ).
+
+    Delta de contrato M6 — não previsto em §5.1 original. Adicionado em TAREFA-602
+    para suportar validação amostral humana do juiz LLM (§9.5, ADR-003).
+    Implementação concreta: ``CohenKappaAdapter`` (infrastructure/stats/).
+
+    ``sklearn`` fica APENAS no adapter concreto — nunca neste port (Nota M6 item 5).
+    """
+
+    def compute(
+        self,
+        y_true: Sequence[int],
+        y_pred: Sequence[int],
+    ) -> float:
+        """Calcula Cohen's κ entre dois vetores de rótulos binários.
+
+        Args:
+            y_true: rótulos do anotador humano (referência); valores em {0, 1}.
+            y_pred: rótulos do juiz LLM binarizados; valores em {0, 1}.
+
+        Returns:
+            Coeficiente kappa de Cohen em [-1, 1].
+        """
+        ...
+
+
+@runtime_checkable
 class ReportPort(Protocol):
     """Gera o relatório executivo HTML consolidado da rodada (§11.4, TAREFA-406/408).
 

@@ -1,0 +1,90 @@
+# Relatório de Validação do Juiz LLM — Cohen's κ
+
+**Data de geração:** {{ generated_at }}
+**run_id:** `{{ run_id }}`
+**round_id:** `{{ round_id }}`
+
+---
+
+## 1. Metadados do Juiz
+
+| Campo | Valor |
+|---|---|
+| Modelo do juiz | `{{ result.judge_model }}` |
+| Determinismo confirmado (`batch_invariant`) | {{ "✅ Sim" if result.batch_invariant_confirmed else "⚠️ NÃO — comparação pode ser inválida (ADR-003)" }} |
+| Threshold de binarização | `{{ result.binarization_threshold }}` |
+
+> **Semântica da binarização:** `judge_binary = 1` quando `rubric_biomed_score < {{ result.binarization_threshold }}`
+> (juiz concorda com falha crítica quando atribui score baixo).
+
+---
+
+## 2. Tamanhos Amostrais
+
+| Descrição | N |
+|---|---|
+| Total de linhas no Parquet | {{ result.n_total }} |
+| Linhas com anotação humana | {{ result.n_annotated }} |
+| Linhas válidas (anotadas + score não-NaN) | {{ result.n_valid }} |
+| Excluídas por NaN do juiz (`n_excluded_nan`) | {{ result.n_excluded_nan }} |
+
+{% if result.n_excluded_nan > 0 %}
+> ⚠️ **Atenção:** {{ result.n_excluded_nan }} linha(s) com anotação humana foram excluídas porque o juiz retornou NaN (ADR-007).
+{% endif %}
+
+---
+
+## 3. Cohen's κ
+
+**Cohen's κ = {{ "%.4f" | format(result.cohen_kappa) }} ({{ result.kappa_interpretation }})**
+
+### Interpretação — escala de Landis & Koch
+
+{% if result.kappa_interpretation == "quase-perfeita" %}
+κ ≥ 0.80 — **quase-perfeita** — concordância excelente com o avaliador humano.
+O juiz LLM pode ser usado como substituto confiável da avaliação humana neste domínio.
+{% elif result.kappa_interpretation == "substancial" %}
+0.60 ≤ κ < 0.80 — **substancial** — suporte forte ao uso como métrica de avaliação.
+A concordância é robusta; o juiz é adequado para uso em produção com monitoramento ocasional.
+{% elif result.kappa_interpretation == "moderada" %}
+0.40 ≤ κ < 0.60 — **moderada** — usar com cautela; análise manual de discordâncias recomendada.
+Considere revisar os casos de discordância antes de confiar plenamente no juiz.
+{% elif result.kappa_interpretation == "razoável" %}
+0.20 ≤ κ < 0.40 — **razoável** — concordância limitada; revisão do prompt de rubrica recomendada.
+O juiz apresenta concordância acima do acaso, mas abaixo do aceitável para uso autônomo.
+{% else %}
+κ < 0.20 — **fraca** — concordância próxima do acaso; considerar troca de juiz antes de próximas rodadas.
+A validade da avaliação automática é comprometida. Recomenda-se revisão completa da rubrica ou do modelo juiz.
+{% endif %}
+
+---
+
+## 4. Matriz de Confusão
+
+> Referência = anotação humana (`critical_failure_flag`); Predição = juiz binarizado.
+
+|  | **Juiz: Falha (1)** | **Juiz: OK (0)** |
+|---|---|---|
+| **Humano: Falha (1)** | TP = {{ result.confusion_matrix.TP }} | FN = {{ result.confusion_matrix.FN }} |
+| **Humano: OK (0)** | FP = {{ result.confusion_matrix.FP }} | TN = {{ result.confusion_matrix.TN }} |
+
+---
+
+## 5. Primeiras Discordâncias (até 20)
+
+{% if result.discordances %}
+| row_id | rubric_biomed_score | judge_binary | critical_failure_flag |
+|---|---|---|---|
+{% for d in result.discordances[:20] %}
+| `{{ d.row_id }}` | {{ "%.4f" | format(d.rubric_biomed_score) }} | {{ d.judge_binary }} | {{ d.critical_failure_flag }} |
+{% endfor %}
+{% if result.discordances | length > 20 %}
+_... e mais {{ result.discordances | length - 20 }} discordância(s) não exibidas._
+{% endif %}
+{% else %}
+_Nenhuma discordância — concordância perfeita entre juiz e anotador humano._
+{% endif %}
+
+---
+
+_Relatório gerado automaticamente por `ielm-eval validate-judge`._

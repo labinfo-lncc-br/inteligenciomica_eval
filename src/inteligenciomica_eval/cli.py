@@ -1101,6 +1101,113 @@ def show_config(
     pprint(cfg)
 
 
+@app.command(name="validate-judge")
+def validate_judge(
+    run_id: Annotated[str, typer.Option("--run-id", help="Run identifier.")],
+    round_id: Annotated[str, typer.Option("--round-id", help="Round identifier.")],
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Binarization threshold: judge_binary=1 when rubric_biomed_score < threshold.",
+        ),
+    ] = 0.50,
+    report: Annotated[
+        Path,
+        typer.Option(
+            "--report", help="Output path for the Markdown validation report."
+        ),
+    ] = Path("docs/judge_validation_report.md"),
+    config: Annotated[
+        Path, typer.Option("--config", help="Path to round config YAML.")
+    ] = Path("round_config.yaml"),
+    min_sample: Annotated[
+        int,
+        typer.Option(
+            "--min-sample",
+            help="Minimum number of valid annotated rows required to compute κ.",
+        ),
+    ] = 10,
+) -> None:
+    """Compute Cohen's κ between the LLM judge and human annotations (§9.5, ADR-003).
+
+    Reads ``rubric_biomed_score`` and ``critical_failure_flag`` from Parquet,
+    binarizes the judge score (``judge_binary=1`` when ``score < threshold``),
+    calculates Cohen's κ, and writes a Markdown report to ``--report``.
+
+    Prints a summary (κ, interpretation, n_valid, n_excluded_nan, threshold) on stdout.
+    """
+    from inteligenciomica_eval.application.judge_validation import (
+        JudgeValidationConfig,
+        JudgeValidationUseCase,
+    )
+    from inteligenciomica_eval.domain.errors import (
+        ConfigValidationError,
+        InsufficientAnnotationError,
+        StorageError,
+    )
+    from inteligenciomica_eval.infrastructure.adapters.judge_validation_report_adapter import (
+        JudgeValidationReportAdapter,
+    )
+    from inteligenciomica_eval.infrastructure.config.schema import load_round_config
+    from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
+        ParquetStorage,
+    )
+    from inteligenciomica_eval.infrastructure.stats.cohen_kappa_adapter import (
+        CohenKappaAdapter,
+    )
+
+    try:
+        cfg = load_round_config(config)
+    except FileNotFoundError as exc:
+        _err_console.print(f"[red]Config não encontrado:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ConfigValidationError as exc:
+        _err_console.print(f"[red]Configuração inválida:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    data_dir = config.parent / "data"
+    storage = ParquetStorage(base_dir=data_dir, round_id=cfg.round_id)
+
+    val_config = JudgeValidationConfig(
+        binarization_threshold=threshold,
+        min_sample_size=min_sample,
+    )
+    uc = JudgeValidationUseCase(
+        reader=storage,
+        kappa_calculator=CohenKappaAdapter(),
+        config=val_config,
+    )
+
+    try:
+        result = uc.run(run_id=run_id, round_id=round_id)
+    except InsufficientAnnotationError as exc:
+        _err_console.print(f"[red]Amostra insuficiente:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except StorageError as exc:
+        _err_console.print(f"[red]Storage error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    reporter = JudgeValidationReportAdapter()
+    reporter.generate_report(result, path=report, run_id=run_id, round_id=round_id)
+
+    _console.print(
+        f"\n[bold]Validação do juiz — {run_id} / {round_id}[/bold]\n"
+        f"  Cohen's κ        : [bold]{result.cohen_kappa:.4f}[/bold]"
+        f" ({result.kappa_interpretation})\n"
+        f"  n_valid          : {result.n_valid}\n"
+        f"  n_excluded_nan   : {result.n_excluded_nan}\n"
+        f"  threshold        : {result.binarization_threshold}\n"
+        f"  batch_invariant  : {'✅' if result.batch_invariant_confirmed else '⚠️ NÃO'}\n"
+    )
+    if not result.batch_invariant_confirmed:
+        _err_console.print(
+            "[yellow]⚠️ AVISO CRÍTICO: batch_invariant=False em algum registro. "
+            "O juiz pode não ser determinístico — a comparação κ pode ser inválida (ADR-003).[/yellow]"
+        )
+    _console.print(f"[green]Relatório gravado em:[/green] {report}")
+
+
 def main() -> None:
     """CLI entry point wrapper with explicit KeyboardInterrupt handling."""
     try:

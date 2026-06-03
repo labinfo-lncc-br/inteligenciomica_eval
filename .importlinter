@@ -32,6 +32,7 @@ forbidden_modules =
     statsmodels
     scipy
     scikit_posthocs
+    sklearn
     yaml
 
 # ---------------------------------------------------------------------------
@@ -63,6 +64,7 @@ forbidden_modules =
     statsmodels
     scipy
     scikit_posthocs
+    sklearn
     yaml
 ignore_imports =
     inteligenciomica_eval.application.statistical_analysis -> statsmodels

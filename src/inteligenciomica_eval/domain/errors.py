@@ -341,3 +341,23 @@ class InsufficientSampleError(InteligenciomicaEvalError):
         )
         self.actual_size = actual_size
         self.required_size = required_size
+
+
+class InsufficientAnnotationError(InteligenciomicaEvalError):
+    """Levantada quando a amostra anotada é menor que o mínimo configurado (TAREFA-602).
+
+    Impede o cálculo de Cohen's κ quando não há dados suficientes para uma
+    estimativa confiável da concordância entre juiz LLM e anotador humano.
+
+    Args:
+        n_valid: número de linhas válidas (com anotação E score não-NaN).
+        min_required: tamanho mínimo exigido pela configuração.
+    """
+
+    def __init__(self, n_valid: int, min_required: int) -> None:
+        super().__init__(
+            f"Insufficient annotations for Cohen's κ: {n_valid} valid samples "
+            f"(minimum required: {min_required}). Annotate more rows before validating."
+        )
+        self.n_valid = n_valid
+        self.min_required = min_required
