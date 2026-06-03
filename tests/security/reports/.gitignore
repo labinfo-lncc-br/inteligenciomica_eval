@@ -1,0 +1,5 @@
+# Artefatos de varredura de segredos — podem conter paths sensíveis do ambiente
+# O arquivo detect_secrets_baseline.json é commitado (sem segredos reais)
+# Outros relatórios de scan completo ficam apenas locais
+trufflehog_output.json
+pip_audit_full.json

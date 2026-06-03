@@ -68,7 +68,9 @@ Ground truth (resposta de referência):
 
 Contextos recuperados:
 {% for ctx in contexts %}
-[{{ loop.index }}] {{ ctx }}
+<contexto id="{{ loop.index }}">
+{{ ctx }}
+</contexto>
 {% endfor %}
 Resposta gerada pelo modelo:
 {{ generated_answer }}
