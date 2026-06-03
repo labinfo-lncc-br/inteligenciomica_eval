@@ -51,6 +51,12 @@ ielm-eval annotate --config round_config.yaml --run-id <run> \
     --ingest export_review_editado.jsonl
 ```
 
+## Operação
+
+Para instruções detalhadas de instalação, configuração de GPUs, execução de rodadas,
+anotação humana, análise estatística e troubleshooting, consulte o
+**[Manual de Operação](docs/operations_manual.md)**.
+
 ## Development
 
 ```bash
