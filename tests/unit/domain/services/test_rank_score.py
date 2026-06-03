@@ -85,6 +85,13 @@ def test_construction_invalid_weight_value_raises(bad_val: float) -> None:
 
 
 @pytest.mark.unit
+def test_construction_zero_weight_is_valid() -> None:
+    # reforçado: mata mutante val<0.0→val<=0.0 em rank_score.py:__init__ (mutmut_10).
+    # Zero é não-negativo — deve ser aceito sem exceção.
+    RankScoreCalculator({"median": 0.0})
+
+
+@pytest.mark.unit
 def test_construction_unknown_key_raises_config_error() -> None:
     with pytest.raises(ConfigValidationError) as exc_info:
         RankScoreCalculator({"nonexistent_key": 0.5})
@@ -168,6 +175,31 @@ def test_compute_empty_weights_uses_defaults() -> None:
     assert calc_empty.compute(inp).value == pytest.approx(
         calc_default.compute(inp).value, abs=1e-12
     )
+
+
+@pytest.mark.unit
+def test_compute_custom_weights_exact_value() -> None:
+    # reforçado: mata mutantes de chave-string em rank_score.py:compute
+    # (mutmut_13/17/18/22/26/27/31/35/36/40/44/45).
+    # Todos os 4 pesos são definidos com valores distintos dos defaults;
+    # o valor esperado é calculado pela fórmula canônica com esses pesos.
+    # Qualquer chave corrompida (None, "XXmedianXX", "MEDIAN", etc.) faz
+    # _weights.get cair no default → resultado diverge dos 0.67 esperados.
+    custom_weights = {
+        "median": 0.40,
+        "one_minus_failure": 0.30,
+        "win_rate": 0.20,
+        "critical_failure_penalty": 0.10,
+    }
+    calc = RankScoreCalculator(custom_weights)
+    inp = RankScoreInputs(
+        median_score=0.8,
+        failure_rate=0.2,
+        win_rate=0.6,
+        critical_failure_rate=0.1,
+    )
+    # 0.40*0.8 + 0.30*(1-0.2) + 0.20*0.6 - 0.10*0.1 = 0.32 + 0.24 + 0.12 - 0.01 = 0.67
+    assert calc.compute(inp).value == pytest.approx(0.67, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------

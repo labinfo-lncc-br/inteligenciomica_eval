@@ -145,6 +145,21 @@ module = ["matplotlib.*", "seaborn.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
+# Mutation testing (mutmut 3.x — TAREFA-601)
+# Roda FORA do CI normal: gate manual do M6 (pode levar vários minutos).
+# O CI só verifica existência e score ≥ 80% no artefato commitado.
+# M5 adiado: funnel.py NÃO está em paths_to_mutate (módulo inexistente).
+# ---------------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["src/inteligenciomica_eval/domain/services/"]
+# also_copy garante que todo o src/ é copiado para mutants/ — necessário porque
+# os testes importam módulos do domínio que estão fora de domain/services/.
+also_copy = ["src/"]
+tests_dir = ["tests/unit/domain/services/"]
+pytest_add_cli_args = ["-x", "-q", "--no-header"]
+mutate_only_covered_lines = false
+
+# ---------------------------------------------------------------------------
 # Pytest
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]

@@ -217,6 +217,25 @@ def test_compute_zero_weight_nan_metric_does_not_propagate() -> None:
     assert not math.isnan(result.value)
 
 
+@pytest.mark.unit
+def test_compute_zero_weight_does_not_abort_loop() -> None:
+    # reforçado: mata mutante continue→break em final_score.py:compute (mutmut_5).
+    # Quando o primeiro campo tem peso 0, o loop deve CONTINUAR (não quebrar);
+    # os pesos seguintes precisam ser processados. Verificado pelo valor exato.
+    w = {**DEFAULT_WEIGHTS, "answer_correctness": 0.0, "faithfulness": 0.65}
+    calc = FinalScoreCalculator(w)
+    mv = _mv(
+        answer_correctness=float("nan"),  # peso 0 — NaN não propaga
+        faithfulness=1.0,
+        rubric_biomed_score=0.0,
+        context_recall=0.0,
+        context_precision=0.0,
+        answer_relevancy=0.0,
+    )
+    # Apenas faithfulness contribui: 0.65 * 1.0 = 0.65
+    assert calc.compute(mv).value == pytest.approx(0.65, abs=1e-12)
+
+
 # ---------------------------------------------------------------------------
 # Golden dataset
 # ---------------------------------------------------------------------------

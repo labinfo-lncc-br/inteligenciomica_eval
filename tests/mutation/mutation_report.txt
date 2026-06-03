@@ -1,0 +1,319 @@
+Mutation Testing Report -- inteligenciomica-eval (TAREFA-601)
+Generated  : 2026-06-02 22:45:57 -03
+Tool       : mutmut, version 3.5.0
+Target     : src/inteligenciomica_eval/domain/services/
+Tests      : tests/unit/domain/services/
+
+Summary
+-------
+Total mutants  : 263
+Not checked    : 0
+Killed         : 243
+Survived       : 20
+Mutation score : 92.4%
+Threshold      : 80%
+Gate           : PASS
+
+Survivors (20)
+----------------------------------------
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.aggregation.x__iqr__mutmut_5
+# inteligenciomica_eval.domain.services.aggregation.x__iqr__mutmut_5: survived
+--- src/inteligenciomica_eval/domain/services/aggregation.py
++++ src/inteligenciomica_eval/domain/services/aggregation.py
+@@ -5,6 +5,6 @@
+     for fewer than 2 values — IQR is undefined for a single point.
+     """
+     if len(values) < 2:
+-        return float("nan")
++        return float("NAN")
+     q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
+     return q3 - q1
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.aggregation.x__iqr__mutmut_11
+# inteligenciomica_eval.domain.services.aggregation.x__iqr__mutmut_11: survived
+--- src/inteligenciomica_eval/domain/services/aggregation.py
++++ src/inteligenciomica_eval/domain/services/aggregation.py
+@@ -6,5 +6,5 @@
+     """
+     if len(values) < 2:
+         return float("nan")
+-    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
++    q1, _, q3 = statistics.quantiles(values, method="inclusive")
+     return q3 - q1
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.aggregation.x__critical_failure_rate__mutmut_6
+# inteligenciomica_eval.domain.services.aggregation.x__critical_failure_rate__mutmut_6: survived
+--- src/inteligenciomica_eval/domain/services/aggregation.py
++++ src/inteligenciomica_eval/domain/services/aggregation.py
+@@ -6,6 +6,6 @@
+     """
+     annotated = [r for r in results if r.critical_failure_flag is not None]
+     if not annotated:
+-        return float("nan")
++        return float("NAN")
+     critical_count = sum(1 for r in annotated if r.critical_failure_flag == 1)
+     return critical_count / len(annotated)
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.aggregation.x__win_rates__mutmut_6
+# inteligenciomica_eval.domain.services.aggregation.x__win_rates__mutmut_6: survived
+--- src/inteligenciomica_eval/domain/services/aggregation.py
++++ src/inteligenciomica_eval/domain/services/aggregation.py
+@@ -15,7 +15,7 @@
+ 
+     n_questions = len(all_qids)
+     if n_questions == 0:
+-        return {k: float("nan") for k in groups}
++        return {k: float(None) for k in groups}
+ 
+     config_q_mean: dict[tuple[str, str], dict[str, float]] = {}
+     for key, grp in groups.items():
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.aggregation.x__win_rates__mutmut_7
+# inteligenciomica_eval.domain.services.aggregation.x__win_rates__mutmut_7: survived
+--- src/inteligenciomica_eval/domain/services/aggregation.py
++++ src/inteligenciomica_eval/domain/services/aggregation.py
+@@ -15,7 +15,7 @@
+ 
+     n_questions = len(all_qids)
+     if n_questions == 0:
+-        return {k: float("nan") for k in groups}
++        return {k: float("XXnanXX") for k in groups}
+ 
+     config_q_mean: dict[tuple[str, str], dict[str, float]] = {}
+     for key, grp in groups.items():
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.aggregation.x__win_rates__mutmut_8
+# inteligenciomica_eval.domain.services.aggregation.x__win_rates__mutmut_8: survived
+--- src/inteligenciomica_eval/domain/services/aggregation.py
++++ src/inteligenciomica_eval/domain/services/aggregation.py
+@@ -15,7 +15,7 @@
+ 
+     n_questions = len(all_qids)
+     if n_questions == 0:
+-        return {k: float("nan") for k in groups}
++        return {k: float("NAN") for k in groups}
+ 
+     config_q_mean: dict[tuple[str, str], dict[str, float]] = {}
+     for key, grp in groups.items():
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.aggregation.xǁAggregationServiceǁaggregate_all__mutmut_21
+# inteligenciomica_eval.domain.services.aggregation.xǁAggregationServiceǁaggregate_all__mutmut_21: survived
+--- src/inteligenciomica_eval/domain/services/aggregation.py
++++ src/inteligenciomica_eval/domain/services/aggregation.py
+@@ -41,7 +41,7 @@
+         n_obs = len(valid)
+ 
+         if n_obs == 0:
+-            mean_s = median_s = min_s = iqr_s = fail_r = float("nan")
++            mean_s = median_s = min_s = iqr_s = fail_r = float("NAN")
+         else:
+             mean_s = statistics.mean(valid)
+             median_s = statistics.median(valid)
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁ__init____mutmut_3
+# inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁ__init____mutmut_3: survived
+--- src/inteligenciomica_eval/domain/services/rank_score.py
++++ src/inteligenciomica_eval/domain/services/rank_score.py
+@@ -3,10 +3,7 @@
+         if key not in _VALID_WEIGHT_KEYS:
+             raise ConfigValidationError(
+                 field=key,
+-                reason=(
+-                    f"'{key}' is not a valid RankScore weight key. "
+-                    f"Valid keys: {sorted(_VALID_WEIGHT_KEYS)}"
+-                ),
++                reason=None,
+             )
+     for _key, val in weights.items():
+         if not math.isfinite(val) or val < 0.0:
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_1
+# inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_1: survived
+--- src/inteligenciomica_eval/domain/services/rank_score.py
++++ src/inteligenciomica_eval/domain/services/rank_score.py
+@@ -12,8 +12,7 @@
+     if (
+         math.isnan(inputs.median_score)
+         or math.isnan(inputs.failure_rate)
+-        or math.isnan(inputs.win_rate)
+-        or math.isnan(inputs.critical_failure_rate)
++        or math.isnan(inputs.win_rate) and math.isnan(inputs.critical_failure_rate)
+     ):
+         return RankScore(float("nan"))
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_2
+# inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_2: survived
+--- src/inteligenciomica_eval/domain/services/rank_score.py
++++ src/inteligenciomica_eval/domain/services/rank_score.py
+@@ -11,8 +11,7 @@
+         """
+     if (
+         math.isnan(inputs.median_score)
+-        or math.isnan(inputs.failure_rate)
+-        or math.isnan(inputs.win_rate)
++        or math.isnan(inputs.failure_rate) and math.isnan(inputs.win_rate)
+         or math.isnan(inputs.critical_failure_rate)
+     ):
+         return RankScore(float("nan"))
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_3
+# inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_3: survived
+--- src/inteligenciomica_eval/domain/services/rank_score.py
++++ src/inteligenciomica_eval/domain/services/rank_score.py
+@@ -10,8 +10,7 @@
+             com o valor calculado (pode ser negativo ou NaN).
+         """
+     if (
+-        math.isnan(inputs.median_score)
+-        or math.isnan(inputs.failure_rate)
++        math.isnan(inputs.median_score) and math.isnan(inputs.failure_rate)
+         or math.isnan(inputs.win_rate)
+         or math.isnan(inputs.critical_failure_rate)
+     ):
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_11
+# inteligenciomica_eval.domain.services.rank_score.xǁRankScoreCalculatorǁcompute__mutmut_11: survived
+--- src/inteligenciomica_eval/domain/services/rank_score.py
++++ src/inteligenciomica_eval/domain/services/rank_score.py
+@@ -15,7 +15,7 @@
+         or math.isnan(inputs.win_rate)
+         or math.isnan(inputs.critical_failure_rate)
+     ):
+-        return RankScore(float("nan"))
++        return RankScore(float("NAN"))
+ 
+     w_m = self._weights.get("median", DEFAULT_WEIGHTS["median"])
+     w_f = self._weights.get(
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_3
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_3: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -3,10 +3,7 @@
+         if key not in _METRIC_VECTOR_FIELDS:
+             raise ConfigValidationError(
+                 field=key,
+-                reason=(
+-                    f"'{key}' is not a field of MetricVector. "
+-                    f"Valid fields: {sorted(_METRIC_VECTOR_FIELDS)}"
+-                ),
++                reason=None,
+             )
+     total = sum(weights.values())
+     if abs(total - 1.0) > _WEIGHTS_TOLERANCE:
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_12
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_12: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -9,7 +9,7 @@
+                 ),
+             )
+     total = sum(weights.values())
+-    if abs(total - 1.0) > _WEIGHTS_TOLERANCE:
++    if abs(total - 1.0) >= _WEIGHTS_TOLERANCE:
+         raise WeightsDoNotSumToOneError(
+             actual_sum=total, tolerance=_WEIGHTS_TOLERANCE
+         )
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_14
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_14: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -11,6 +11,6 @@
+     total = sum(weights.values())
+     if abs(total - 1.0) > _WEIGHTS_TOLERANCE:
+         raise WeightsDoNotSumToOneError(
+-            actual_sum=total, tolerance=_WEIGHTS_TOLERANCE
++            actual_sum=total, tolerance=None
+         )
+     self._weights: dict[str, float] = dict(weights)
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_16
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁ__init____mutmut_16: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -11,6 +11,5 @@
+     total = sum(weights.values())
+     if abs(total - 1.0) > _WEIGHTS_TOLERANCE:
+         raise WeightsDoNotSumToOneError(
+-            actual_sum=total, tolerance=_WEIGHTS_TOLERANCE
+-        )
++            actual_sum=total, )
+     self._weights: dict[str, float] = dict(weights)
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_7
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_7: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -16,7 +16,7 @@
+     for field_name, weight in self._weights.items():
+         if weight == 0.0:
+             continue
+-        value = cast(float, getattr(metrics, field_name))
++        value = cast(None, getattr(metrics, field_name))
+         if weight > 0.0 and math.isnan(value):
+             return FinalScore(float("nan"))
+         total += weight * value
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_16
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_16: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -17,7 +17,7 @@
+         if weight == 0.0:
+             continue
+         value = cast(float, getattr(metrics, field_name))
+-        if weight > 0.0 and math.isnan(value):
++        if weight >= 0.0 and math.isnan(value):
+             return FinalScore(float("nan"))
+         total += weight * value
+     return FinalScore(total)
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_17
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_17: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -17,7 +17,7 @@
+         if weight == 0.0:
+             continue
+         value = cast(float, getattr(metrics, field_name))
+-        if weight > 0.0 and math.isnan(value):
++        if weight > 1.0 and math.isnan(value):
+             return FinalScore(float("nan"))
+         total += weight * value
+     return FinalScore(total)
+
+============================================================
+Mutant : inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_22
+# inteligenciomica_eval.domain.services.final_score.xǁFinalScoreCalculatorǁcompute__mutmut_22: survived
+--- src/inteligenciomica_eval/domain/services/final_score.py
++++ src/inteligenciomica_eval/domain/services/final_score.py
+@@ -18,6 +18,6 @@
+             continue
+         value = cast(float, getattr(metrics, field_name))
+         if weight > 0.0 and math.isnan(value):
+-            return FinalScore(float("nan"))
++            return FinalScore(float("NAN"))
+         total += weight * value
+     return FinalScore(total)

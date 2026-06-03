@@ -55,3 +55,6 @@ Thumbs.db
 
 # tmp
 tmp/
+
+# mutmut 3.x — cópia mutada dos fontes (gerado em runtime; não commitar)
+mutants/

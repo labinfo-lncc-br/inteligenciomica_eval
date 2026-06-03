@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 jobs:
   unit:
@@ -99,6 +100,41 @@ jobs:
           files: integration-coverage.xml
           flags: integration
           fail_ci_if_error: false
+
+  mutation-gate:
+    name: Mutation gate M6 (domain/services — score ≥ 80%)
+    runs-on: ubuntu-latest
+    # Roda apenas em push para main OU via disparo manual.
+    # NÃO executa em cada PR — protege o tempo de CI (mutmut é lento).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run mutation gate
+        run: uv run python scripts/mutation_gate.py
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: tests/mutation/mutation_report.txt
 
   e2e:
     name: E2E gate M4 (decisão executiva)
