@@ -54,6 +54,9 @@ from inteligenciomica_eval.domain.ports import (  # noqa: E402
 from inteligenciomica_eval.infrastructure.config.adapter_configs import (  # noqa: E402
     RagasAdapterConfig,
 )
+from inteligenciomica_eval.infrastructure.config.settings import (  # noqa: E402
+    mask_endpoint,
+)
 
 _log = structlog.get_logger()
 
@@ -253,7 +256,7 @@ class RAGASLayer1Adapter:
                     _log.error(
                         "ragas_io_failure",
                         field=field,
-                        judge_url=self._judge_url,
+                        judge_url=mask_endpoint(self._judge_url),
                         error_type=type(exc).__name__,
                     )
                     raise MetricComputationError(
@@ -262,7 +265,7 @@ class RAGASLayer1Adapter:
                 _log.warning(
                     "ragas_metric_failed",
                     field=field,
-                    judge_url=self._judge_url,
+                    judge_url=mask_endpoint(self._judge_url),
                 )
                 scores[field] = float("nan")
                 nan_fields.append(field)
@@ -271,7 +274,7 @@ class RAGASLayer1Adapter:
 
         _log.info(
             "ragas_layer1_computed",
-            judge_url=self._judge_url,
+            judge_url=mask_endpoint(self._judge_url),
             ragas_version=self.ragas_version,
             embed_source=self._embed_source,
             max_concurrency=self._max_concurrency,

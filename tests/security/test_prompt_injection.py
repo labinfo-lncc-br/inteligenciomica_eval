@@ -4,8 +4,16 @@ Verifica que o template do juiz biomédico encapsula chunks de contexto entre
 marcadores estruturais explícitos, impedindo que conteúdo malicioso em chunks
 recuperados seja confundido com instrução de rubrica pelo LLM-juiz.
 
-NÃO chama GPU nem serviço externo — todo I/O de rede é interceptado via AsyncMock
-no nível do SDK OpenAI (padrão CLAUDE.md §11).
+NÃO chama GPU nem serviço externo.
+
+Nota de implementação — AsyncMock em vez de respx:
+  O spec da TAREFA-605 menciona respx.mock como opção de mock, mas o padrão
+  definitivo do projeto (CLAUDE.md §11, TAREFA-014-G) é mockar no nível do SDK
+  OpenAI via AsyncMock em ``adapter._client.chat.completions.create``.
+  O ``httpx.MockTransport`` injetado via ``http_client`` pode não interceptar
+  chamadas em ambientes onde o SDK usa ``asyncify``/``asyncio.to_thread`` na
+  primeira chamada.  AsyncMock é 100% determinístico e independente de versão
+  de anyio/sniffio/httpx — portanto é a abordagem correta para este projeto.
 """
 
 from __future__ import annotations

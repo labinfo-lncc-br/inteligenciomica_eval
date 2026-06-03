@@ -67,6 +67,7 @@ Ground truth (resposta de referência):
 {{ ground_truth }}
 
 Contextos recuperados:
+{# ADR-003: delimitação dados×instrução — cada chunk encapsulado entre <contexto> #}
 {% for ctx in contexts %}
 <contexto id="{{ loop.index }}">
 {{ ctx }}

@@ -18,7 +18,7 @@
 | S4 | `subprocess` usa `shell=False` em todos os usos | **PASS** | `grep -rn "shell=True" src/` → sem saída |
 | S5 | Delimitação chunk×instrução no template do juiz (ADR-003) | **PASS** | Template corrigido nesta tarefa — ver seção S5 abaixo |
 | S6 | Teste de chunk malicioso: template delimita corretamente | **PASS** | `pytest -m security` → 5 passed em 0.62s |
-| S7 | Logs não contêm textos completos de ground truth, tokens ou PII | **PASS** | `grep -rn "ground_truth\|generated_answer" src/ \| grep "log\."` → sem saída |
+| S7 | Logs não contêm textos completos de ground truth, tokens ou PII | **PASS** | Fix ciclo B: `judge_url` ofuscado com `mask_endpoint()` nos 3 eventos de log do `RAGASLayer1Adapter` — ver seção S7 |
 | S8 | `uv.lock` commitado (deps reprodutíveis) | **PASS** | `uv.lock` presente e atualizado no repositório |
 | S9 | Nenhuma dependência com vulnerabilidade crítica não mitigada | **PASS** | 2 CVEs encontrados; nenhum crítico no vetor de ataque deste projeto — ver seção S9 |
 
@@ -159,22 +159,30 @@ AsyncMock no SDK contém delimitadores; (5) múltiplos chunks têm marcadores in
 
 ## S7 — Logs sem PII / textos completos
 
-**Comandos executados:**
-```bash
-grep -rn "\.bind\|\.info\|\.warning\|\.error\|\.debug" src/ \
-  | grep -i "ground_truth\|generated_answer\|token\|password"
-```
-**Saída:** (vazia) — **PASS**
+**Fix aplicado no ciclo B** (descoberta da auditoria Codex):
 
-Verificação adicional de todos os eventos de log estruturado nos adapters:
+O `RAGASLayer1Adapter` logava `judge_url=self._judge_url` cru em 3 eventos:
+`ragas_io_failure` (error), `ragas_metric_failed` (warning), `ragas_layer1_computed` (info).
+Como a URL vem de variável de ambiente, qualquer credencial embutida (`user:pass@host`)
+vazaria para os logs.
+
+**Correção:** substituído por `judge_url=mask_endpoint(self._judge_url)` nos 3 eventos.
+`mask_endpoint` (definido em `infrastructure/config/settings.py`) substitui a parte de
+autenticação por `****@`, passando `<not set>` e strings sem `://` intactos.
+
+```bash
+grep -rn "judge_url=self\._judge_url" src/
+```
+**Saída após fix:** (vazia) — **PASS**
+
+Verificação dos demais adapters:
 - `VLLMGeneratorAdapter`: loga `question_id`, `tokens_in`, `tokens_out`, `latency_ms`
 - `PrometheusJudgeAdapter`: loga `question_id`, `score`, `latency_ms`
-- `RAGASLayer1Adapter`: loga `judge_url`, valores numéricos das 6 métricas, `nan_fields`, `latency_ms`
 - `DeterministicMetricsAdapter`: loga `bertscore_f1`, `rouge_l`, `latency_ms`
-- `VLLMServerManagerAdapter`: loga `model`, `port`, `pid`, `url`, `forced` (bool)
+- `VLLMServerManagerAdapter`: loga `model`, `port`, `pid`, `url`, `forced` (bool) —
+  `url` não contém credenciais (vLLM em localhost ou rede interna sem auth)
 
-Nenhum adapter loga `ground_truth`, `generated_answer` (texto completo), tokens de API
-ou URL com credencial embutida.
+Nenhum adapter loga `ground_truth`, `generated_answer` (texto completo) nem tokens de API.
 
 ---
 
