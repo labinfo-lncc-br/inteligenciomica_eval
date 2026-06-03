@@ -77,6 +77,16 @@ def test_construction_weights_exactly_one_ok() -> None:
 
 
 @pytest.mark.unit
+def test_construction_weights_sum_at_tolerance_boundary_is_accepted() -> None:
+    # mata mutmut_12: fronteira de tolerância observável (2**-30)
+    # abs((1.0 + 2**-30) - 1.0) == 2**-30 exatamente (Lema de Sterbenz; 2**-30 > ULP(1.0)=2**-52)
+    # Com '>':  2**-30 > 2**-30 → False → não levanta → ACEITA.
+    # Com '>=': 2**-30 >= 2**-30 → True  → levanta  → mutante MORTO.
+    w = {"answer_correctness": 1.0, "faithfulness": 2**-30}
+    FinalScoreCalculator(w)  # não deve levantar WeightsDoNotSumToOneError
+
+
+@pytest.mark.unit
 def test_construction_unknown_metric_raises_config_error() -> None:
     w = {"nonexistent_metric": 0.5, "answer_correctness": 0.5}
     with pytest.raises(ConfigValidationError) as exc_info:

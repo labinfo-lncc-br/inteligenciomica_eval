@@ -11,7 +11,8 @@ from inteligenciomica_eval.domain.errors import (
 )
 from inteligenciomica_eval.domain.value_objects import FinalScore, MetricVector
 
-_WEIGHTS_TOLERANCE: float = 1e-9
+# 2**-30 ≈ 9.313e-10: dyadic exato → fronteira testável via Lema de Sterbenz (mata mutmut_12)
+_WEIGHTS_TOLERANCE: float = 2**-30
 
 _METRIC_VECTOR_FIELDS: frozenset[str] = frozenset(
     f.name for f in dataclasses.fields(MetricVector)
