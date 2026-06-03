@@ -1169,15 +1169,11 @@ def validate_judge(
     data_dir = config.parent / "data"
     storage = ParquetStorage(base_dir=data_dir, round_id=cfg.round_id)
 
-    # judge_model: lido da config da rodada (endpoint env → identificador do juiz).
+    # judge_model: lido de cfg.judge.model (identificador do modelo juiz, §12.1).
     # EvaluationResult não expõe proveniência do juiz via ResultReaderPort, por isso
     # o chamador injeta o nome a partir do round config (round_config.yaml §9.3).
-    judge_model_name = getattr(cfg, "judge", None)
-    judge_model_str = (
-        str(judge_model_name.endpoint_env)
-        if judge_model_name is not None
-        else "unknown"
-    )
+    judge_cfg = getattr(cfg, "judge", None)
+    judge_model_str = str(judge_cfg.model) if judge_cfg is not None else "unknown"
 
     val_config = JudgeValidationConfig(
         binarization_threshold=threshold,
