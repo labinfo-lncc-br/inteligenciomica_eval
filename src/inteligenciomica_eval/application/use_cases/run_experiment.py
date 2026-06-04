@@ -328,9 +328,21 @@ class RunExperimentUseCase:
                             n_generated=gen_report.n_generated,
                         )
                         _notify(progress_callback, f"generation:{model_name}")
+                    except KeyboardInterrupt:
+                        # RNF7: SIGINT durante geração → shutdown gracioso (sem propagação).
+                        self._shutdown_requested = True
+                        _log.warning(
+                            "generation_interrupted_by_signal",
+                            run_id=run_id,
+                            wave_index=wave.wave_index,
+                            model=model_name,
+                        )
                     finally:
                         await self._server_manager.stop(active_handle)
                         active_handle = None
+
+                    if self._shutdown_requested:
+                        break
 
         finally:
             # Limpeza de servidor ativo em saídas inesperadas (exceção, SIGKILL).
