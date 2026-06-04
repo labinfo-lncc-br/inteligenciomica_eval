@@ -369,10 +369,18 @@ def _build_experiment(
 
 @pytest.fixture()
 def round_config() -> RoundConfig:
-    """RoundConfig mínima válida para o cenário E2E M3."""
+    """RoundConfig mínima válida para o cenário E2E M3.
+
+    ``questions`` aponta para o arquivo real empacotado via importlib.resources,
+    provando a integração E2E do campo configurável da rodada.
+    """
+    resource = importlib.resources.files(
+        "inteligenciomica_eval.infrastructure.benchmark"
+    ).joinpath("questions_rf1.jsonl")
     return RoundConfig(
         round_id=_ROUND_ID,
         model_registry_path="model_registry.yaml",
+        questions=str(resource),
         phases=["A", "B"],
         bases=["IDx_400k", "ID_230K"],
         llms=["stub-gen-a", "stub-gen-b"],
@@ -395,12 +403,10 @@ def round_config() -> RoundConfig:
 
 
 @pytest.fixture()
-def questions_stub() -> list[Question]:
-    """2 primeiras perguntas reais do benchmark RF1 (path explícito — prova contrato do loader)."""
-    resource = importlib.resources.files(
-        "inteligenciomica_eval.infrastructure.benchmark"
-    ).joinpath("questions_rf1.jsonl")
-    return load_questions(Path(str(resource)))[:2]
+def questions_stub(round_config: RoundConfig) -> list[Question]:
+    """2 primeiras perguntas reais do benchmark RF1, carregadas via round_config.questions."""
+    assert round_config.questions is not None
+    return load_questions(Path(round_config.questions))[:2]
 
 
 @pytest.fixture()
@@ -426,6 +432,7 @@ async def test_m3_full_cycle_generates_and_evaluates(
     container: DIContainer,
     questions_stub: list[Question],
     tmp_storage: ParquetStorage,
+    tmp_path: Path,
 ) -> None:
     """Ciclo completo A+B: 12 células geradas, avaliadas, julgadas e agregadas."""
     exp_uc, _ = _build_experiment(tmp_storage, questions_stub, container)
@@ -460,14 +467,12 @@ async def test_m3_full_cycle_generates_and_evaluates(
         f"phase=='B': {n_b}, esperado {_GOLDEN['n_rows_phase_b']}"
     )
 
-    # Colunas do golden presentes no Parquet (primeiro arquivo — schema uniforme)
-    parquet_dir = tmp_path_from_storage(tmp_storage)
-    if parquet_dir is not None:
-        table = _read_parquet_safe(parquet_dir)
-        if table is not None:
-            present = set(table.schema.names)
-            for col in _GOLDEN["schema_columns"]:
-                assert col in present, f"Coluna '{col}' ausente no Parquet"
+    # Colunas do golden presentes no Parquet (via tmp_path — sem atributos privados)
+    table = _read_parquet_safe(tmp_path / "data")
+    if table is not None:
+        present = set(table.schema.names)
+        for col in _GOLDEN["schema_columns"]:
+            assert col in present, f"Coluna '{col}' ausente no Parquet"
 
     # Roundtrip fiel por (row_id, final_score, question_id)
     loaded_by_row = {r.answer.row_id.value: r for r in results}
@@ -494,11 +499,6 @@ async def test_m3_full_cycle_generates_and_evaluates(
     assert len(report.rank_scores) == len(report.aggregates)
     for rs in report.rank_scores:
         assert math.isnan(rs.value), f"rank_score={rs.value} deveria ser NaN"
-
-
-def tmp_path_from_storage(storage: ParquetStorage) -> Path | None:
-    """Extrai base_dir do ParquetStorage via atributo interno."""
-    return getattr(storage, "_base_dir", None)
 
 
 def _read_parquet_safe(base_dir: Path) -> Any:
@@ -640,6 +640,19 @@ async def test_m3_nan_cell_excluded_from_aggregation(
     assert any(not math.isnan(rs.value) for rs in rank_scores), (
         "Pelo menos 1 rank_score deve ser calculável após anotações"
     )
+
+    # Rank_scores do cenário NaN conferem com golden recomputado à mão (ADR-007).
+    # Cálculo manual: median=0.824, failure_rate=0, win_rate=1/12, crit_fail_rate=0
+    # → 0.50*0.824 + 0.20*(1-0.0) + 0.15*(1/12) - 0.15*0.0 = 0.6245
+    nan_golden = _GOLDEN["rank_scores_nan_scenario"]
+    for agg in aggregates:
+        config_key = f"{agg.base.value}::{agg.llm.value}"
+        expected = nan_golden.get(config_key)
+        if expected is not None and agg.n_observations > 0:
+            assert agg.rank_score.value == pytest.approx(expected, abs=_F32_TOL), (
+                f"rank_score[{config_key}]={agg.rank_score.value:.6f}, "
+                f"esperado {expected}"
+            )
 
 
 # ---------------------------------------------------------------------------

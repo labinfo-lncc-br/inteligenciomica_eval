@@ -141,6 +141,9 @@ class RoundConfig(BaseModel):
     # Default preserva compatibilidade com rodadas/fixtures existentes; o
     # experiment_round1.yaml o define explicitamente.
     model_registry_path: str = "model_registry.yaml"
+    # Path para o arquivo JSONL de perguntas do benchmark. None → usa o arquivo
+    # empacotado (questions_rf1.jsonl) via importlib.resources (default de produção).
+    questions: str | None = None
     phases: list[str]
     bases: list[str]
     llms: list[str]

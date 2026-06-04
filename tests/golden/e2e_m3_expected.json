@@ -1,6 +1,7 @@
 {
   "_comment_scoring": "FinalScore = 0.40*ac + 0.30*f + 0.15*cr + 0.10*cp + 0.05*ar = 0.40*0.80 + 0.30*0.90 + 0.15*0.70 + 0.10*0.85 + 0.05*0.88 = 0.320+0.270+0.105+0.085+0.044 = 0.824 (rubric excluido dos pesos; peso=0 evita NaN da Passada 2)",
-  "_comment_rank": "rank_score=null pois critical_failure_rate=NaN (sem anotacoes humanas); RankScoreCalculator retorna NaN se qualquer input for NaN (ADR-007). Calculo hipotetico com crit=0: 0.50*0.824+0.20*1.0+0.15*(1/6)+0.15*1.0=0.412+0.200+0.025+0.150=0.787",
+  "_comment_rank_main": "rank_scores_by_config = todos null no cenario principal (sem anotacoes). critical_failure_rate=NaN => rank_score=NaN (ADR-007, RankScoreCalculator).",
+  "_comment_rank_nan": "rank_scores_nan_scenario: calculados para cenario 3 apos anotar linhas normais com critical_failure_flag=0. Calculo manual: median=0.824, failure_rate=0.0, win_rate=1/12 (q[0]=NaN sem pontos; q[1]: 6 configs empatam em 0.824 => 1/6 wins / 2 questions = 1/12), crit_fail_rate=0.0. RankScore = 0.50*0.824 + 0.20*(1-0.0) + 0.15*(1/12) - 0.15*0.0 = 0.412 + 0.200 + 0.0125 = 0.6245",
   "_comment_phase_b": "Fase B usa base='fixed' internamente (_PHASE_B_BASE); 6 grupos de config no total: ID_230K x {gen-a,gen-b}, IDx_400k x {gen-a,gen-b}, fixed x {gen-a,gen-b}",
   "n_generated": 12,
   "n_evaluated": 12,
@@ -30,5 +31,14 @@
     "IDx_400k::stub-gen-b": null,
     "fixed::stub-gen-a": null,
     "fixed::stub-gen-b": null
+  },
+  "rank_scores_nan_scenario": {
+    "_comment": "Cenario 3 (ADR-007): 1 questao NaN excluida por config; 1 questao normal com final_score=0.824; todas anotadas flag=0. Todos os 6 grupos empatam em rank_score=0.6245.",
+    "ID_230K::stub-gen-a": 0.6245,
+    "ID_230K::stub-gen-b": 0.6245,
+    "IDx_400k::stub-gen-a": 0.6245,
+    "IDx_400k::stub-gen-b": 0.6245,
+    "fixed::stub-gen-a": 0.6245,
+    "fixed::stub-gen-b": 0.6245
   }
 }
