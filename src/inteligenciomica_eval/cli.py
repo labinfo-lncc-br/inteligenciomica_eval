@@ -54,6 +54,17 @@ def run(
     config: Annotated[
         Path, typer.Option("--config", help="Path to round config YAML.")
     ],
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run-id", help="Run identifier (required for real execution)."),
+    ] = None,
+    phase: Annotated[
+        str,
+        typer.Option(
+            "--phase",
+            help="Phases to execute: A | B | both.",
+        ),
+    ] = "both",
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -75,25 +86,25 @@ def run(
     Use ``--dry-run`` to validate the config and inspect the planned cell matrix
     and GPU/wave map without making any calls to vLLM, Qdrant, or other external
     services. Use ``--serial`` to preview the conservative one-wave-per-model layout.
+    ``--run-id`` is required for real execution (identifies this run in the Parquet
+    storage). Ignored in ``--dry-run`` mode.
     """
+    import asyncio
+
+    from rich.panel import Panel
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+
     # Lazy imports keep CLI startup fast and avoid circular-import issues.
-    from inteligenciomica_eval.application.services.wave_scheduler import (
-        WaveSchedulerService,
-    )
     from inteligenciomica_eval.domain.errors import (
         ConfigValidationError,
-        ModelNotInRegistryError,
+        ServerStartTimeoutError,
     )
-    from inteligenciomica_eval.infrastructure.config.model_registry import (
-        load_model_registry,
-        to_wave_spec,
-    )
-    from inteligenciomica_eval.infrastructure.config.provenance import config_hash
     from inteligenciomica_eval.infrastructure.config.schema import load_round_config
     from inteligenciomica_eval.infrastructure.config.settings import (
         RuntimeSettings,
-        mask_endpoint,
-        resolve_endpoint,
+    )
+    from inteligenciomica_eval.infrastructure.wiring import (
+        build_container,
     )
 
     try:
@@ -105,35 +116,213 @@ def run(
         _err_console.print(f"[red]Configuration error:[/red] {exc}")
         raise typer.Exit(1) from exc
 
-    if not dry_run:
+    # ------------------------------------------------------------------ dry-run
+    if dry_run:
+        _run_dry_run(
+            config=config,
+            cfg=cfg,
+            serial=serial,
+            phase=phase,
+        )
+        return
+
+    # ------------------------------------------------------------------ real run
+    if not run_id:
         _err_console.print(
-            "[yellow]Full run not yet implemented. Use --dry-run to validate the config.[/yellow]"
+            Panel(
+                "--run-id é obrigatório para execução real. "
+                "Use --dry-run para validar a configuração sem tocar em GPU/rede.",
+                title="Erro",
+                style="red",
+            )
         )
         raise typer.Exit(1)
 
-    # --- Dry-run: print plan, never call vLLM / Qdrant ---
-    # RF1 fixes 13 questions per evaluation round (§P4: curated and versioned pre-M1).
-    n_questions = 13
-
-    cfg_hash = config_hash(cfg)
     settings = RuntimeSettings()
 
-    n_bases = len(cfg.bases)
-    n_llms = len(cfg.llms)
-    n_seeds = len(cfg.seeds)
+    # Converte --phase para lista de fases (None = usar o YAML).
+    phases_filter: list[str] | None = None if phase == "both" else [phase.upper()]
 
-    _console.print(f"\n[bold]Dry-run plan — {cfg.round_id}[/bold]")
+    try:
+        container = build_container(
+            cfg,
+            settings,
+            config_dir=config.parent,
+            serial=serial,
+            phases=phases_filter,
+        )
+    except ConfigValidationError as exc:
+        _err_console.print(Panel(str(exc), title="Erro de configuração", style="red"))
+        raise typer.Exit(1) from exc
+
+    questions = container.benchmark_loader()
+    _console.print(
+        f"\n[bold]Iniciando run:[/bold] {run_id}  |  "
+        f"perguntas carregadas: {len(questions)}\n"
+    )
+
+    # Totais para as 3 barras de progresso.
+    # Phase A usa bases (retrieval); Phase B não usa bases.
+    # _cells_per_wave = células geradas por 1 onda de LLM nas fases efetivas.
+    _eff_phases = phases_filter if phases_filter is not None else list(cfg.phases)
+    _cells_phase_a = (
+        len(questions) * len(cfg.bases) * len(cfg.seeds) if "A" in _eff_phases else 0
+    )
+    _cells_phase_b = len(questions) * len(cfg.seeds) if "B" in _eff_phases else 0
+    _cells_per_wave = _cells_phase_a + _cells_phase_b
+    _n_cells = _cells_per_wave * len(cfg.llms)
+
+    from rich.progress import MofNCompleteColumn
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        transient=False,
+    ) as progress:
+        task_waves = progress.add_task("Ondas concluídas", total=len(cfg.llms))
+        task_gen = progress.add_task("Células geradas", total=_n_cells)
+        task_eval = progress.add_task("Passadas de avaliação", total=2)
+
+        def _progress_callback(msg: str) -> None:
+            if msg.startswith("generation:"):
+                model = msg.split(":", 1)[1]
+                progress.advance(task_waves, 1)
+                progress.advance(task_gen, _cells_per_wave)
+                progress.update(
+                    task_waves,
+                    description=f"Ondas concluídas — [bold]{model}[/bold]",
+                )
+            elif msg == "metrics_pass_done":
+                progress.advance(task_eval, 1)
+                progress.update(
+                    task_eval, description="Métricas calculadas (passada 1/2)"
+                )
+            elif msg == "judge_pass_done":
+                progress.advance(task_eval, 1)
+                progress.update(
+                    task_eval,
+                    description="[green]Julgamento concluído (passada 2/2)[/green]",
+                )
+            elif msg == "experiment_completed":
+                progress.update(
+                    task_waves, description="[green]Ondas concluídas[/green]"
+                )
+                progress.update(task_gen, description="[green]Células geradas[/green]")
+
+        try:
+            report = asyncio.run(
+                container.experiment_uc.execute(
+                    run_id=run_id,
+                    questions=questions,
+                    progress_callback=_progress_callback,
+                )
+            )
+        except KeyboardInterrupt:
+            _err_console.print(
+                "\n[yellow]⚠ Encerramento solicitado — aguardando onda atual...[/yellow]"
+            )
+            container.experiment_uc._shutdown_requested = True
+            raise typer.Exit(130) from None
+        except ServerStartTimeoutError as exc:
+            _err_console.print(
+                Panel(
+                    f"Timeout ao iniciar vLLM: {exc}",
+                    title="Erro de servidor",
+                    style="red",
+                )
+            )
+            _log.exception("run_server_start_timeout", run_id=run_id)
+            raise typer.Exit(1) from exc
+        except Exception as exc:
+            _log.exception("run_unexpected_error", run_id=run_id)
+            _err_console.print(
+                Panel(
+                    f"Erro inesperado: {type(exc).__name__}: {exc}",
+                    title="Erro",
+                    style="red",
+                )
+            )
+            raise typer.Exit(1) from exc
+
+    _print_run_summary(report)
+
+
+def _run_dry_run(
+    *,
+    config: Path,
+    cfg: object,
+    serial: bool,
+    phase: str,
+) -> None:
+    """Executa o modo --dry-run: valida config e exibe plano sem I/O real.
+
+    Tenta usar ``build_fake_container`` para provar a fiação. Se ``fakes`` não
+    estiver no ``sys.path`` (fora do pytest), cai silenciosamente para
+    ``load_questions`` direto — sem stacktrace para o usuário (ADR UX).
+    """
+    from inteligenciomica_eval.application.services.wave_scheduler import (
+        WaveSchedulerService,
+    )
+    from inteligenciomica_eval.domain.errors import ModelNotInRegistryError
+    from inteligenciomica_eval.infrastructure.benchmark.loader import (
+        load_questions as _load_questions,
+    )
+    from inteligenciomica_eval.infrastructure.config.model_registry import (
+        load_model_registry,
+        to_wave_spec,
+    )
+    from inteligenciomica_eval.infrastructure.config.provenance import config_hash
+    from inteligenciomica_eval.infrastructure.config.settings import (
+        RuntimeSettings,
+        mask_endpoint,
+        resolve_endpoint,
+    )
+
+    # Tenta build_fake_container para provar a fiação; fallback silencioso se
+    # tests/fakes não está no sys.path (ex: CLI em produção sem PYTHONPATH=tests).
+    try:
+        from inteligenciomica_eval.infrastructure.wiring import (
+            build_fake_container as _bfc,
+        )
+
+        questions = _bfc(cfg).benchmark_loader()  # type: ignore[arg-type]
+    except ImportError:
+        _log.debug(
+            "dry_run_fakes_unavailable",
+            hint="Define PYTHONPATH=tests para verificação completa da fiação.",
+        )
+        _settings_tmp = RuntimeSettings()
+        _qpath = _settings_tmp.BENCHMARK_QUESTIONS_PATH
+        questions = _load_questions(Path(_qpath) if _qpath else None)
+
+    settings = RuntimeSettings()
+    n_questions = len(questions)
+    cfg_hash = config_hash(cfg)  # type: ignore[arg-type]
+
+    n_bases = len(cfg.bases)  # type: ignore[attr-defined]
+    n_llms = len(cfg.llms)  # type: ignore[attr-defined]
+    n_seeds = len(cfg.seeds)  # type: ignore[attr-defined]
+
+    # Filtra fases conforme --phase (mesmo critério da execução real).
+    phases: list[str] = (
+        [phase.upper()] if phase.lower() != "both" else list(cfg.phases)  # type: ignore[attr-defined]
+    )
+
+    _console.print(f"\n[bold]Dry-run plan — {cfg.round_id}[/bold]")  # type: ignore[attr-defined]
     _console.print(f"config_hash  : {cfg_hash}")
-    _console.print(f"phases       : {cfg.phases}")
+    _console.print(f"phases       : {phases}")
+    _console.print(f"Perguntas carregadas: {n_questions}")
 
     _console.print(f"\n[bold]Cell counts (N_questions = {n_questions}):[/bold]")
-    if "A" in cfg.phases:
+    if "A" in phases:
         cells_a = n_bases * n_llms * n_seeds * n_questions
         _console.print(
             f"  Phase A  : {n_bases} base(s) x {n_llms} LLM(s) x {n_seeds} seed(s)"
             f" x {n_questions} questions = {cells_a} cells"
         )
-    if "B" in cfg.phases:
+    if "B" in phases:
         cells_b = n_llms * n_seeds * n_questions
         _console.print(
             f"  Phase B  : {n_llms} LLM(s) x {n_seeds} seed(s)"
@@ -144,12 +333,14 @@ def run(
     _console.print(
         f"  VLLM_GENERATOR_URL : {mask_endpoint(settings.VLLM_GENERATOR_URL)}"
     )
-    judge_url = resolve_endpoint(cfg.judge.endpoint_env)
-    _console.print(f"  {cfg.judge.endpoint_env} (judge) : {mask_endpoint(judge_url)}")
+    judge_url = resolve_endpoint(cfg.judge.endpoint_env)  # type: ignore[attr-defined]
+    _console.print(
+        f"  {cfg.judge.endpoint_env} (judge) : {mask_endpoint(judge_url)}"  # type: ignore[attr-defined]
+    )
     _console.print(f"  QDRANT_URL         : {mask_endpoint(settings.QDRANT_URL)}")
 
-    # --- GPU/wave map (TAREFA-303) — needs the registry referenced by the round ---
-    registry_path = config.parent / cfg.model_registry_path
+    # GPU/wave map
+    registry_path = config.parent / cfg.model_registry_path  # type: ignore[attr-defined]
     try:
         registry = load_model_registry(registry_path)
     except FileNotFoundError:
@@ -161,14 +352,58 @@ def run(
         scheduler = WaveSchedulerService(
             allow_concurrent_models=not serial, n_questions=n_questions
         )
+        # Passa cfg com phases já filtradas para que o wave map reflita --phase.
+        cfg_for_plan = cfg.model_copy(update={"phases": phases})  # type: ignore[attr-defined]
         try:
-            plan = scheduler.plan(specs, cfg)
+            plan = scheduler.plan(specs, cfg_for_plan)
         except ModelNotInRegistryError as exc:
             _err_console.print(f"[red]Wave plan error:[/red] {exc}")
             raise typer.Exit(1) from exc
         _print_wave_map(plan, specs, registry, serial=serial)
 
     _console.print("\n[green]Config valid — dry-run complete.[/green]")
+
+
+def _print_run_summary(report: object) -> None:
+    """Exibe tabela Rich de sumário pós-execução."""
+    from rich.panel import Panel
+    from rich.table import Table
+
+    table = Table(title=f"Sumário — run_id={report.run_id!r}")  # type: ignore[attr-defined]
+    table.add_column("Métrica", style="bold")
+    table.add_column("Valor", justify="right")
+    table.add_row("Células geradas", str(report.n_generated))  # type: ignore[attr-defined]
+    table.add_row("Células avaliadas", str(report.n_evaluated))  # type: ignore[attr-defined]
+    table.add_row("Células julgadas", str(report.n_judged))  # type: ignore[attr-defined]
+    table.add_row("Células total (planejado)", str(report.n_cells_total))  # type: ignore[attr-defined]
+    table.add_row("Duração (s)", f"{report.duration_s:.1f}")  # type: ignore[attr-defined]
+    _console.print(table)
+
+    rank_scores = getattr(report, "rank_scores", ())
+    aggregates = getattr(report, "aggregates", ())
+    if rank_scores and aggregates:
+        top3 = sorted(
+            zip(aggregates, rank_scores, strict=True),
+            key=lambda x: x[1].value,
+            reverse=True,
+        )[:3]
+        rank_table = Table(title="Top-3 configurações por RankScore")
+        rank_table.add_column("Base")
+        rank_table.add_column("LLM")
+        rank_table.add_column("RankScore", justify="right")
+        for agg, rs in top3:
+            rank_table.add_row(agg.base.value, agg.llm.value, f"{rs.value:.4f}")
+        _console.print(rank_table)
+
+    failed = getattr(report, "failed_waves", ())
+    if failed:
+        _console.print(
+            Panel(
+                f"Ondas com falha: {list(failed)}",
+                title="Aviso — ondas com timeout",
+                style="yellow",
+            )
+        )
 
 
 def _print_wave_map(

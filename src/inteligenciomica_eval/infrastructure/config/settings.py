@@ -28,6 +28,20 @@ class RuntimeSettings(BaseSettings):
     VLLM_JUDGE_URL: str = "<not set>"
     QDRANT_URL: str = "<not set>"
 
+    BENCHMARK_QUESTIONS_PATH: str = ""
+    """Caminho para um arquivo JSONL externo de perguntas do benchmark.
+
+    String vazia (default) = usar o arquivo ``questions_rf1.jsonl`` empacotado
+    no módulo via ``importlib.resources``. Path absoluto ou relativo = arquivo
+    externo, útil para testes de integração e futuras rodadas.
+    """
+
+    VLLM_STARTUP_TIMEOUT_S: int = 300
+    """Tempo máximo (segundos) para aguardar cada servidor vLLM ficar saudável."""
+
+    VLLM_DEFAULT_MAX_MODEL_LEN: int = 4096
+    """Comprimento máximo de contexto padrão (tokens) para modelos vLLM."""
+
 
 def resolve_endpoint(env_var_name: str) -> str:
     """Resolve an endpoint URL from a named environment variable.

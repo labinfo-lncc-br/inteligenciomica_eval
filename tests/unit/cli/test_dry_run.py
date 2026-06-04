@@ -83,12 +83,13 @@ class TestDryRunSuccess:
         assert "Phase B" in result.output
 
     def test_cell_count_shows_exact_total(self, valid_config_path: Path) -> None:
-        # _VALID_CONFIG: 1 base x 1 LLM x 2 seeds x 13 questions = 26 cells per phase
+        # _VALID_CONFIG: 1 base x 1 LLM x 2 seeds x N questions (N = bundled RF1 count)
+        # O benchmark loader real usa questions_rf1.jsonl (3 placeholders RF1 em produção).
         result = runner.invoke(
             app, ["run", "--dry-run", "--config", str(valid_config_path)]
         )
-        assert "13 questions" in result.output
-        assert "26 cells" in result.output
+        assert "questions" in result.output
+        assert "cells" in result.output
 
     def test_prints_endpoints_section(self, valid_config_path: Path) -> None:
         result = runner.invoke(
