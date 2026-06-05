@@ -9,9 +9,10 @@ Subsistema de Validação InteligenciÔmica.
 | M0 (001–012) | Fundação do Domínio (VOs, entidades, ports, serviços) | ✅ |
 | M1 (013–021) | Adapters de Infraestrutura (Qdrant, vLLM, RAGAS, BERTScore) | ✅ |
 | M2 (022–028) | Pipeline de Métricas (Camadas 1+2, gate de integração M2) | ✅ |
-| M3 (301–310) | Orquestração das 4 GPUs + Rodada 1 completa | ✅ |
+| M3 (301–311) | Orquestração das 4 GPUs + ExternalVLLMServerManager + probes de proveniência | ✅ |
 | M4 (401–409) | Decisão executiva (Anotação · Agregação · Estatística · Relatório) | ✅ |
-| M5 (501–5xx) | Rodada 2 (OFAT) + Funil de dois estágios (ADR-013) | 🔜 |
+| M6 (601–605) | Qualidade e Segurança (mutation testing, Cohen's κ, property-based, manual) | ✅ |
+| M5 (501–5xx) | Rodada 2 (OFAT) + Funil de dois estágios | 🔜 |
 
 ## Quickstart
 
@@ -25,6 +26,17 @@ uv sync --frozen
 # Verify the CLI works
 uv run ielm-eval --help
 uv run ielm-eval version
+```
+
+## Rodada 1 — Modos de execução (M3)
+
+```bash
+# Modo managed: ielm-eval gerencia os processos vLLM localmente
+ielm-eval run --config round_config.yaml
+
+# Modo external: vLLM já está rodando (cluster LNCC / deploy dedicado)
+# Configurar server_mode: external + endpoint_env por modelo no YAML
+ielm-eval run --config round_config.yaml --require-verified-determinism
 ```
 
 ## Decisão executiva (M4)
@@ -95,10 +107,13 @@ src/inteligenciomica_eval/
 │   └── use_cases/
 ├── infrastructure/  # Adapters, repositories, config, prompts
 │   ├── adapters/
-│   │   ├── html_report.py        # HTMLReportAdapter (M4)
-│   │   └── stats_adapters.py     # Wilcoxon/Friedman/MLM adapters (M4)
+│   │   ├── external_vllm_server_manager.py  # ExternalVLLMServerManager (M3-311)
+│   │   ├── html_report.py                   # HTMLReportAdapter (M4)
+│   │   └── stats_adapters.py                # Wilcoxon/Friedman/MLM (M4)
 │   ├── config/
 │   ├── prompts/
+│   ├── provenance/
+│   │   └── endpoint_probe.py     # probe_served_model/vllm_version/judge_determinism (M3-311)
 │   └── repositories/
 ├── visualization/   # MatplotlibVisualizationAdapter (M4 — 6 plots canônicos)
 └── cli.py           # Typer CLI: run, annotate, analyze, report, status, show-config
@@ -107,6 +122,7 @@ tests/
 ├── unit/            # Fast, no I/O (70–80%)
 ├── integration/     # Real adapters (15–25%)
 ├── e2e/             # Full-stack flows (5%)
+│   ├── test_m3_full_cycle.py     # Gate E2E M3 ciclo completo (TAREFA-310/311)
 │   └── test_full_pipeline_m4.py  # Gate E2E M4 (TAREFA-409)
 ├── fakes/           # In-memory port implementations
 ├── factories/       # Test data builders

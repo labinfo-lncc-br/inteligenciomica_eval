@@ -381,15 +381,58 @@ sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
 | 020 | `AnnotationReaderAdapter` (JSONL de anotações críticas) | ✅ |
 | 021 | Gate de integração M1 (pipeline adapter end-to-end + smoke E2E) | ✅ |
 
+### M3 — Orquestração das 4 GPUs ✅ CONCLUÍDO (TAREFA-301 a 311)
+
+| Tarefa | Descrição | Status |
+|--------|-----------|--------|
+| 301 | `WaveSchedulerService` — escalonamento de ondas de geração | ✅ |
+| 302 | `VLLMServerManager` real (subprocess, GPU partition, regime-by-flag) | ✅ |
+| 303 | `WaveSchedulerService` + CLI `--dry-run` + `RoundConfigView` Protocol | ✅ |
+| 304 | `RunGenerationPassUseCase` (orquestra geração por onda) | ✅ |
+| 305 | `RunMetricsPassUseCase` + PR retroativo `score_batch` | ✅ |
+| 306 | `RunJudgePassUseCase` (rubrica por resultado) | ✅ |
+| 307 | `RunExperimentUseCase` + `GeneratorFactory` | ✅ |
+| 308 | `AnnotationWorkflowUseCase` + CLI `annotate` (Camada 3) | ✅ |
+| 309 | DI Wiring + CLI `run` + `BenchmarkLoader` | ✅ |
+| 310 | Gate E2E ciclo completo M3 | ✅ |
+| 311 | `ExternalVLLMServerManager` + probes de proveniência (ADR-014) | ✅ |
+
+### M4 — Decisão Executiva ✅ CONCLUÍDO (TAREFA-401 a 409)
+
+| Tarefa | Descrição | Status |
+|--------|-----------|--------|
+| 401 | CLI `annotate --export` (exportação JSONL para revisão humana) | ✅ |
+| 402 | `IngestHumanAnnotationUseCase` + CLI `--ingest`/`--force` | ✅ |
+| 403 | `AggregateResultsUseCase` (ConfigAggregate multi-run) | ✅ |
+| 404 | `StatsPort` adapters (Wilcoxon, Friedman+Nemenyi, MLM) | ✅ |
+| 405 | `StatisticalAnalysisUseCase` + `StatsReport` VO | ✅ |
+| 406 | `FigurePath`/`ReportPath` VOs + `VisualizationPort`/`ReportPort` | ✅ |
+| 407 | `MatplotlibVisualizationAdapter` (6 plots canônicos) | ✅ |
+| 408 | `HTMLReportAdapter` + CLI `analyze`/`report`/`status`/`show-config` | ✅ |
+| 409 | Gate E2E M4 (pipeline completo até relatório HTML) | ✅ |
+
+### M6 — Qualidade e Segurança ✅ CONCLUÍDO (TAREFA-601 a 605)
+
+| Tarefa | Descrição | Status |
+|--------|-----------|--------|
+| 601 | Mutation testing `domain/services` (mutmut; 94.8% score) | ✅ |
+| 602 | Cohen's κ — validação do juiz (κ golden=0.5 moderada) | ✅ |
+| 603 | Property-based tests hypothesis (4 targets, 15 testes) | ✅ |
+| 604 | Manual de operação final + smoke-test (7 subcomandos) | ✅ |
+| 605 | Revisão de segurança final (S1–S9, ADR-003 template fix) | ✅ |
+
 ### Cobertura atual
 
 ```
-697 passed, 11 skipped — 96.75% total coverage
-deterministic_metrics.py: 100% | prometheus_judge.py: 100% | vllm_generator.py: 100% | vllm_server_manager.py: 100% | annotation_reader.py: 100% | ragas_metrics.py: 87% | qdrant_retriever.py: 96%
+1252 passed, 6 skipped — 89.51% total coverage
+external_vllm_server_manager.py: 100% | endpoint_probe.py: 100% | vllm_server_manager.py: 100%
+deterministic_metrics.py: 100% | prometheus_judge.py: 100% | vllm_generator.py: 100%
+annotation_reader.py: 100% | ragas_metrics.py: 87% | qdrant_retriever.py: 96%
 ```
 
-> Os 11 skips locais = 5 testes Qdrant (sem Docker) + 1 pipeline M1 (sem Docker) + 3 smoke
-> E2E (sem `E2E_ENABLED`) + 2 pré-existentes. No CI o job `integration` executa os de Qdrant.
+> Os 6 skips locais = 5 testes Qdrant (sem Docker) + 1 pipeline M1 (sem Docker).
+> Smoke E2E agora roda com `E2E_ENABLED` — não contam mais como skip frequente.
+> No CI o job `integration` executa os de Qdrant.
 > `ragas_metrics.py` em 87% local: o ramo de construção real (embeddings + LLM) é coberto
 > apenas pelo teste de integração, que roda no job `integration` do CI.
 
@@ -523,3 +566,49 @@ deterministic_metrics.py: 100% | prometheus_judge.py: 100% | vllm_generator.py: 
 - **Leitura do Parquet bruto**: usar `pq.ParquetFile(path).read()`, **nunca** `pq.read_table(path)` dentro da árvore Hive (`round_id=…`) — esta dispara auto-detecção de partição e conflita `round_id` string × dictionary (`ArrowTypeError`).
 - **`read_by_run_id` da spec não existe**: usar `load(round_id=, phase=)` (API real do `ResultReaderPort`). `EvaluationResult` persistido com `DeterminismRegime.GENERATOR` → `batch_invariant=False` no Parquet.
 - **CI** (§10): jobs `unit` (guarda 85%) e `integration` (serviço `qdrant/qdrant:v1.9`). `pytest-randomly` adicionado p/ `pytest --randomly` (item 8). Validação local via probe com `AsyncQdrantClient(location=":memory:")` (teste em si é skipado sem Docker).
+
+---
+
+## 14. Decisões de Design Relevantes para M3
+
+### ExternalVLLMServerManager (TAREFA-311 — concluída)
+
+- Implementa `VLLMServerManagerPort` **sem subprocess** — para vLLM pré-existente (clusters LNCC).
+- `ServerHandle.pid: int | None` (PR retroativo): `None` em modo external, `int` em modo managed. `_fail`/`_force_kill` no `VLLMServerManagerAdapter` fazem assert `pid is not None` antes de SIGTERM/SIGKILL.
+- `stop()` no-op (loga `vllm_server_external_skipped`); `start()` valida endpoint via `/health` sem criar processo; `wait_healthy()` chama `start()` internamente.
+- `RoundConfig.server_mode: Literal["managed", "external"]`; `ModelEntry.endpoint_env: dict[str, str]` para override de URL por gerador em modo external.
+- Wiring seleciona adapter via `server_mode`; helper `_build_external_server_manager()` instancia `ExternalVLLMServerManager`.
+
+### Probes de proveniência (TAREFA-311 — concluída)
+
+- `infrastructure/provenance/endpoint_probe.py`: 3 probes HTTP via `httpx.AsyncClient`.
+  - `probe_served_model(url) -> str | None` — `GET /v1/models` → primeiro `id` da lista.
+  - `probe_vllm_version(url) -> str | None` — `GET /version` → campo `version`.
+  - `probe_judge_determinism(url, model) -> bool` — 2 completions com `seed=42, temperature=0.0`; `True` se tokens idênticos.
+- `collect_provenance(config: RoundConfig) -> ProvenanceInfo` — SHA-256 canônico de `config.model_dump()` (não de `round_id`).
+- `_mask_url(url) -> str` — mantém `scheme://host:port/***`; oculta path para audit de topologia sem vazar paths internos.
+- `endpoints_provenance` no `ExperimentReport` inclui: `config_hash`, `topology` (managed/external), `endpoint_masked`, `healthy`, `vllm_version` por gerador, `judge_det`.
+
+### Semântica de `determinism_verified` (TAREFA-311 — concluída)
+
+- **`False` por default** — sem prova, sem `True` (ADR-014). Só vira `True` se `probe_judge_determinism` executar e confirmar tokens idênticos.
+- Fallback de exceção em `_run_endpoint_probes()` retorna `({}, False, {...})` — nunca assume determinismo em caso de falha de probe.
+- CLI `--require-verified-determinism`: aborta o run se `determinism_verified=False` ao final dos probes.
+
+### `config_hash` canônico (TAREFA-311 — concluída)
+
+- Calculado em `wiring.build_container()` via `collect_provenance(config)` — SHA-256 de `json.dumps(config.model_dump(), sort_keys=True, default=str)`.
+- Propagado para: `_ExperimentConfig.config_hash`, `ExperimentConfigView.config_hash` (Protocol), `ParquetStorage` (campo `RowProvenance`), `ExperimentReport.config_hash`, log `endpoints_provenance`.
+- `run_experiment.py` usa `self._config.config_hash[:8]` diretamente — não recalcula internamente.
+
+### `judge_url` em modo external (TAREFA-311 — concluída)
+
+- Em modo `managed`: `judge_url = settings.VLLM_JUDGE_URL` (env global).
+- Em modo `external`: `judge_url = _judge_url_probe` (URL validada via probe do registry) se disponível; fallback para `settings.VLLM_JUDGE_URL`.
+- Ambos `PrometheusJudgeAdapter` e `RAGASLayer1Adapter` recebem o mesmo `judge_url` — consistência garantida no wiring.
+
+### Testes de wiring offline-safe (TAREFA-311 — concluída)
+
+- `RAGASLayer1Adapter.__init__` chama `_build_embeddings(config)` (carrega HuggingFace) na construção.
+- Testes de wiring em `test_wiring_external.py` usam fixture `autouse=True` que faz patch de `_build_embeddings` → `MagicMock()` — sem downloads de modelo em CI offline.
+- Testes de CLI em `test_run_external.py` usam `_make_asyncio_run_mock()` com `side_effect` que fecha coroutines (`coro.close()`) — elimina `RuntimeWarning: coroutine was never awaited`.
