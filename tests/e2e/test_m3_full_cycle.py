@@ -207,6 +207,42 @@ class _StubExpConfig:
     model_registry: tuple[ModelWaveSpec, ...]
     model_spec_map: dict[str, ModelSpec]
     retrieval: _RetriCfg
+    # Proveniência (TAREFA-311, ADR-014)
+    server_mode: str = "managed"
+    config_hash: str = "a" * 64  # dummy 64-char SHA-256
+    generator_served_model_ids: dict[str, str] = dataclasses.field(
+        default_factory=lambda: {"stub-gen-a": "stub-gen-a", "stub-gen-b": "stub-gen-b"}
+    )
+    judge_determinism_verified: bool = True
+    endpoints_provenance: dict[str, object] = dataclasses.field(
+        default_factory=lambda: {
+            "server_mode": "managed",
+            "config_hash": "a" * 64,
+            "topology": "server_mode=managed; 2 generator(s); judge=present",
+            "judge": {
+                "logical_name": "stub-judge",
+                "served_model_id": "stub-judge",
+                "vllm_version": "unknown",
+                "endpoint_masked": "http://localhost:8003/***",
+                "healthy": True,
+                "determinism_verified": True,
+            },
+            "generators": {
+                "stub-gen-a": {
+                    "served_model_id": "stub-gen-a",
+                    "vllm_version": "unknown",
+                    "endpoint_masked": "http://localhost:8000/***",
+                    "healthy": True,
+                },
+                "stub-gen-b": {
+                    "served_model_id": "stub-gen-b",
+                    "vllm_version": "unknown",
+                    "endpoint_masked": "http://localhost:8001/***",
+                    "healthy": True,
+                },
+            },
+        }
+    )
 
 
 def _make_exp_config(round_id: str = _ROUND_ID) -> _StubExpConfig:

@@ -86,6 +86,12 @@ class RunConfigView(Protocol):
     A camada ``application`` NÃO importa ``RoundConfig`` (infrastructure — import-linter
     Contract 2/4); depende desta abstração que ``RoundConfig`` satisfaz estruturalmente
     (inversão de dependência, ADR-001). Mesmo padrão do ``RoundConfigView`` de TAREFA-303.
+
+    Campos de proveniência (TAREFA-311, ADR-014):
+    - ``server_mode``: ``"managed"`` ou ``"external"``.
+    - ``generator_served_model_ids``: mapa ``{llm_name: served_model_id}`` preenchido
+      pelo wiring a partir dos probes de endpoint (nunca inventado).
+    - ``judge_determinism_verified``: resultado medido do probe de determinismo do juiz.
     """
 
     phases: list[str]
@@ -93,6 +99,9 @@ class RunConfigView(Protocol):
     seeds: list[int]
     temperature: float
     retrieval: _RetrievalView
+    server_mode: str
+    generator_served_model_ids: dict[str, str]
+    judge_determinism_verified: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,6 +380,11 @@ class RunGenerationPassUseCase:
                     determinism_regime=DeterminismRegime.GENERATOR,
                     critical_failure_flag=None,
                     critical_failure_note=None,
+                    server_mode=self._config.server_mode,
+                    served_model_id=self._config.generator_served_model_ids.get(
+                        llm_name, ""
+                    ),
+                    determinism_verified=self._config.judge_determinism_verified,
                 )
             except GenerationError as exc:
                 is_last = attempt == self._max_retries

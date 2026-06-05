@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import random
@@ -12,6 +13,8 @@ from typing import TYPE_CHECKING, Annotated
 import structlog
 import typer
 from rich.console import Console
+
+from inteligenciomica_eval.infrastructure.wiring import build_container
 
 if TYPE_CHECKING:
     from inteligenciomica_eval.application.services.wave_scheduler import WavePlan
@@ -80,6 +83,16 @@ def run(
             "for debugging or single-GPU hardware. Default: concurrent waves.",
         ),
     ] = False,
+    require_verified_determinism: Annotated[
+        bool,
+        typer.Option(
+            "--require-verified-determinism/--no-require-verified-determinism",
+            help=(
+                "Em server_mode='external': falha (exit 1) se o probe de determinismo "
+                "do juiz retornar False. Ignorado em server_mode='managed'."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run an evaluation round.
 
@@ -88,9 +101,11 @@ def run(
     services. Use ``--serial`` to preview the conservative one-wave-per-model layout.
     ``--run-id`` is required for real execution (identifies this run in the Parquet
     storage). Ignored in ``--dry-run`` mode.
-    """
-    import asyncio
 
+    Em ``server_mode='external'`` (ADR-014), probes de proveniência são executados
+    automaticamente antes do ciclo e exibidos em um Rich Panel. Use
+    ``--require-verified-determinism`` para falhar se o juiz não for determinístico.
+    """
     from rich.panel import Panel
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
@@ -102,9 +117,6 @@ def run(
     from inteligenciomica_eval.infrastructure.config.schema import load_round_config
     from inteligenciomica_eval.infrastructure.config.settings import (
         RuntimeSettings,
-    )
-    from inteligenciomica_eval.infrastructure.wiring import (
-        build_container,
     )
 
     try:
@@ -154,6 +166,15 @@ def run(
     except ConfigValidationError as exc:
         _err_console.print(Panel(str(exc), title="Erro de configuração", style="red"))
         raise typer.Exit(1) from exc
+
+    # Em server_mode='external', executa probes de proveniência antes do ciclo (ADR-014).
+    if cfg.server_mode == "external":
+        _run_external_probes(
+            cfg=cfg,
+            settings=settings,
+            require_verified_determinism=require_verified_determinism,
+            config_dir=config.parent,
+        )
 
     questions = container.benchmark_loader()
     _console.print(
@@ -247,6 +268,116 @@ def run(
             raise typer.Exit(1) from exc
 
     _print_run_summary(report)
+
+
+def _run_external_probes(
+    *,
+    cfg: object,
+    settings: object,
+    require_verified_determinism: bool,
+    config_dir: Path | None = None,
+) -> None:
+    """Executa probes de proveniência e exibe Rich Panel (ADR-014, TAREFA-311).
+
+    Probes executados:
+    - ``probe_served_model`` em cada endpoint configurado.
+    - ``probe_vllm_version`` no endpoint do juiz.
+    - ``probe_judge_determinism`` no endpoint do juiz.
+
+    Se ``require_verified_determinism`` for ``True`` e o probe de juiz falhar,
+    encerra com ``typer.Exit(1)``.
+
+    Args:
+        cfg: :class:`RoundConfig` com ``server_mode='external'``.
+        settings: :class:`RuntimeSettings` (não usado diretamente; os endpoints
+            vêm de ``os.environ`` via ``endpoint_env`` dos modelos no registry).
+        require_verified_determinism: se ``True``, falha em probe de juiz negativo.
+        config_dir: diretório da config YAML; usado para resolver ``model_registry_path``
+            relativo (``None`` → usa o diretório de trabalho atual).
+    """
+    import os
+
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from inteligenciomica_eval.infrastructure.provenance.endpoint_probe import (
+        probe_judge_determinism,
+        probe_served_model,
+        probe_vllm_version,
+    )
+
+    async def _run_probes() -> tuple[dict[str, str], str | None, bool]:
+        """Executa todos os probes e retorna resultados."""
+        model_ids: dict[str, str] = {}
+        judge_version: str | None = None
+        judge_deterministic: bool = False
+
+        # Determina o endpoint do juiz via JudgeConfig.endpoint_env
+        judge_url_raw: str | None = None
+        try:
+            judge_env: str = cfg.judge.endpoint_env  # type: ignore[attr-defined]
+            judge_url_raw = os.environ.get(judge_env)
+        except Exception:
+            pass
+
+        # Probes de modelo por endpoint (best-effort)
+        try:
+            registry_path_str: str = cfg.model_registry_path  # type: ignore[attr-defined]
+            _base = config_dir if config_dir is not None else Path.cwd()
+            _registry_path = _base / registry_path_str
+
+            from inteligenciomica_eval.infrastructure.config.model_registry import (
+                load_model_registry as _lmr,
+            )
+
+            _reg = _lmr(_registry_path)
+            for entry in _reg.models:
+                if entry.endpoint_env:
+                    url = os.environ.get(entry.endpoint_env, "")
+                    if url:
+                        model_id = await probe_served_model(url)
+                        model_ids[entry.name] = model_id or "<unknown>"
+        except Exception:
+            pass
+
+        if judge_url_raw:
+            judge_version = await probe_vllm_version(judge_url_raw)
+            judge_deterministic = await probe_judge_determinism(judge_url_raw)
+
+        return model_ids, judge_version, judge_deterministic
+
+    model_ids, judge_version, judge_deterministic = asyncio.run(_run_probes())
+
+    # Exibe Rich Panel com resultados dos probes
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Probe")
+    table.add_column("Resultado")
+    for model_name, model_id in model_ids.items():
+        table.add_row(f"served_model({model_name})", model_id)
+    table.add_row("vllm_version(juiz)", str(judge_version or "<indisponível>"))
+    table.add_row(
+        "judge_deterministic",
+        "[green]SIM[/green]" if judge_deterministic else "[red]NAO[/red]",
+    )
+
+    _console.print(
+        Panel(
+            table,
+            title="[bold yellow]Probes de Proveniência — server_mode=external[/bold yellow]",
+            style="yellow",
+        )
+    )
+
+    if require_verified_determinism and not judge_deterministic:
+        _err_console.print(
+            Panel(
+                "Probe de determinismo do juiz retornou False (respostas divergem). "
+                "Use --no-require-verified-determinism para continuar mesmo assim.",
+                title="Falha de determinismo",
+                style="red",
+            )
+        )
+        raise typer.Exit(1)
 
 
 def _run_dry_run(

@@ -53,6 +53,11 @@ class ModelEntry(BaseModel):
     is_judge: bool
     batch_invariant: bool
     extra_args: dict[str, str] = Field(default_factory=dict)
+    # Nome da variável de ambiente que contém a URL do endpoint tunelado.
+    # Obrigatório em server_mode="external"; ignorado em server_mode="managed".
+    # ADR-014/ADR-008: nunca armazenar URLs literais no YAML; sempre referenciar
+    # pelo nome da env var.
+    endpoint_env: str | None = None
 
     @model_validator(mode="after")
     def _validate_regime(self) -> ModelEntry:

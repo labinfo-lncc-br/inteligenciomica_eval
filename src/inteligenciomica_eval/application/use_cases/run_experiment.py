@@ -26,7 +26,6 @@ Desvios conscientes em relação à spec (TAREFA-307):
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import signal
 import time
 from collections.abc import Callable, Sequence
@@ -87,6 +86,11 @@ class ExperimentConfigView(Protocol):
     montados pelo wiring (TAREFA-309). A camada ``application`` NÃO importa
     ``RoundConfig`` (Pydantic/infrastructure — import-linter Contract 2/4); depende
     desta abstração por duck-typing (ADR-001, inversão de dependência).
+
+    Campos de proveniência (TAREFA-311, ADR-014):
+    - ``server_mode``: ``"managed"`` ou ``"external"``.
+    - ``config_hash``: SHA-256 canônico da config (primeiros 8 hex).
+    - ``endpoints_provenance``: dict com dados de proveniência por endpoint.
     """
 
     phases: list[str]
@@ -102,6 +106,9 @@ class ExperimentConfigView(Protocol):
     canonical_top_k: int
     model_registry: tuple[ModelWaveSpec, ...]
     model_spec_map: dict[str, ModelSpec]
+    server_mode: str
+    config_hash: str
+    endpoints_provenance: dict[str, object]
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +122,7 @@ class ExperimentReport:
 
     Args:
         run_id: identificador da rodada.
-        config_hash: primeiros 8 hex do SHA-256 de ``round_id`` (proveniência).
+        config_hash: primeiros 8 hex do SHA-256 canônico da config (proveniência).
         wave_plan: plano de ondas calculado antes da execução.
         n_generated: total de linhas geradas com sucesso pela Passada 1.
         n_evaluated: total de linhas avaliadas pelo RAGAS na Passada 2.
@@ -140,6 +147,7 @@ class ExperimentReport:
     rank_scores: tuple[RankScore, ...]
     duration_s: float
     failed_waves: tuple[int, ...]
+    endpoints_provenance: dict[str, object]
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +260,7 @@ class RunExperimentUseCase:
         progress_callback: Callable[[str], None] | None,
         t_start: float,
     ) -> ExperimentReport:
-        config_hash = hashlib.sha256(self._config.round_id.encode()).hexdigest()[:8]
+        config_hash = self._config.config_hash[:8]
 
         # 1a. Plano de ondas.
         wave_plan = self._wave_scheduler.plan(self._config.model_registry, self._config)
@@ -372,6 +380,7 @@ class RunExperimentUseCase:
                 rank_scores=(),
                 duration_s=duration_s,
                 failed_waves=tuple(sorted(failed_wave_set)),
+                endpoints_provenance=dict(self._config.endpoints_provenance),
             )
 
         # 3. Passada de métricas (única, após toda geração).
@@ -435,6 +444,7 @@ class RunExperimentUseCase:
             rank_scores=rank_scores,
             duration_s=duration_s,
             failed_waves=tuple(sorted(failed_wave_set)),
+            endpoints_provenance=dict(self._config.endpoints_provenance),
         )
 
     async def _run_judge_pass(

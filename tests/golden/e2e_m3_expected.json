@@ -22,7 +22,10 @@
     "generated_answer",
     "final_score",
     "bertscore_f1",
-    "rubric_biomed_score"
+    "rubric_biomed_score",
+    "server_mode",
+    "served_model_id",
+    "determinism_verified"
   ],
   "rank_scores_by_config": {
     "ID_230K::stub-gen-a": null,

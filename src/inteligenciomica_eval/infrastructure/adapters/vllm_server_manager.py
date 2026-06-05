@@ -156,6 +156,9 @@ class VLLMServerManagerAdapter:
             gpu_index=model.gpu_index,
             started_at=self._now(),
         )
+        # VLLMServerManagerAdapter sempre cria processos locais com PID inteiro;
+        # pid=None é exclusivo do ExternalVLLMServerManager (ADR-014).
+        assert handle.pid is not None, "managed adapter always has a real PID"
         self._processes[handle.pid] = process
         self._handles[handle.pid] = handle
         self._spawn_drains(handle.pid, process)
@@ -210,6 +213,8 @@ class VLLMServerManagerAdapter:
         Args:
             handle: handle do servidor a parar.
         """
+        # VLLMServerManagerAdapter só recebe handles com pid inteiro (criados em start()).
+        assert handle.pid is not None, "managed stop() called with external handle"
         process = self._processes.get(handle.pid)
         sent = self._signal(handle.pid, signal.SIGTERM)
         forced = await self._await_exit(process, handle.pid) if sent else False
@@ -291,6 +296,8 @@ class VLLMServerManagerAdapter:
         for handle in list(self._handles.values()):
             if handle.port != model.port:
                 continue
+            if handle.pid is None:
+                continue  # external handle — não gerenciado aqui
             process = self._processes.get(handle.pid)
             if process is not None and process.returncode is None:
                 raise ModelSwitchError(
@@ -338,6 +345,8 @@ class VLLMServerManagerAdapter:
 
     def _process_died(self, handle: ServerHandle) -> bool:
         """``True`` se o processo rastreado já terminou (``returncode`` definido)."""
+        if handle.pid is None:
+            return False  # external handle — sem processo local
         process = self._processes.get(handle.pid)
         return process is not None and process.returncode is not None
 
@@ -348,6 +357,7 @@ class VLLMServerManagerAdapter:
         exceção (auditoria 302-B) — o orquestrador (TAREFA-307) acessa a causa-raiz sem
         reparsear logs.
         """
+        assert handle.pid is not None  # managed adapter sempre tem pid
         await self._force_kill(handle)
         stderr_tail = await self._collect_stderr_tail(handle.pid)
         _log.error(
@@ -400,6 +410,7 @@ class VLLMServerManagerAdapter:
 
     async def _force_kill(self, handle: ServerHandle) -> None:
         """Mata o processo com ``SIGKILL`` (startup falho) e aguarda sua saída."""
+        assert handle.pid is not None  # managed adapter sempre tem pid
         process = self._processes.get(handle.pid)
         self._signal(handle.pid, signal.SIGKILL)
         if process is not None:

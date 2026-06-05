@@ -76,6 +76,10 @@ class _Config:
     seeds: list[int] = field(default_factory=lambda: [42])
     temperature: float = 0.0
     retrieval: _Retrieval = field(default_factory=_Retrieval)
+    # Proveniência (TAREFA-311, ADR-014)
+    server_mode: str = "managed"
+    generator_served_model_ids: dict[str, str] = field(default_factory=dict)
+    judge_determinism_verified: bool = True
 
 
 # ---------------------------------------------------------------------------

@@ -222,7 +222,8 @@ class ServerHandle:
     """Handle de um servidor vLLM em execução (ADR-004/ADR-012).
 
     Args:
-        pid: PID do processo vLLM.
+        pid: PID do processo vLLM; ``None`` para servidores externos (ADR-014,
+            modo ``external``) onde não há subprocess local.
         url: URL base do endpoint OpenAI-compatible, com sufixo ``/v1``
             (ex.: ``"http://localhost:8000/v1"``).
         model: identificador (nome) do modelo carregado no servidor.
@@ -230,10 +231,11 @@ class ServerHandle:
             (juiz determinístico, ADR-003); ``False`` para geradores (§9.2.4).
         port: porta TCP onde o servidor expõe a API (compõe :attr:`url`).
         gpu_index: GPU dedicada ao servidor (ADR-012; via ``CUDA_VISIBLE_DEVICES``).
+            Valor ``-1`` para servidores externos (sem alocação local de GPU).
         started_at: instante de início (epoch seconds) para auditoria de ciclo de vida.
     """
 
-    pid: int
+    pid: int | None
     url: str
     model: str
     batch_invariant: bool

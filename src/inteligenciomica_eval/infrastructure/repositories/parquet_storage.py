@@ -83,6 +83,10 @@ EVAL_SCHEMA: pa.Schema = pa.schema(
         pa.field("latency_ms", pa.int32(), nullable=False),
         pa.field("tokens_in", pa.int32(), nullable=False),
         pa.field("tokens_out", pa.int32(), nullable=False),
+        # Proveniência de servidor (TAREFA-311, ADR-014)
+        pa.field("server_mode", pa.string(), nullable=False),
+        pa.field("served_model_id", pa.string(), nullable=False),
+        pa.field("determinism_verified", pa.bool_(), nullable=False),
         pa.field("timestamp", pa.timestamp("us", tz="UTC"), nullable=False),
     ]
 )
@@ -137,6 +141,10 @@ class RowProvenance:
     vllm_version: str = "unknown"
     ragas_version: str = "unknown"
     config_hash: str = ""
+    # Proveniência de servidor (TAREFA-311, ADR-014)
+    server_mode: str = "managed"
+    served_model_id: str = ""
+    determinism_verified: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +242,10 @@ def to_row(
         "latency_ms": 0,
         "tokens_in": 0,
         "tokens_out": 0,
+        # Proveniência de servidor (TAREFA-311, ADR-014)
+        "server_mode": result.server_mode,
+        "served_model_id": result.served_model_id,
+        "determinism_verified": result.determinism_verified,
         "timestamp": datetime.now(UTC),
     }
 
@@ -293,6 +305,9 @@ def from_row(row: dict[str, Any]) -> EvaluationResult:  # Any: heterogeneous Par
         determinism_regime=regime,
         critical_failure_flag=flag,
         critical_failure_note=row.get("critical_failure_note"),
+        server_mode=str(row.get("server_mode", "managed")),
+        served_model_id=str(row.get("served_model_id", "")),
+        determinism_verified=bool(row.get("determinism_verified", True)),
     )
 
 

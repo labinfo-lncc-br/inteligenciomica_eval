@@ -125,6 +125,15 @@ class EvaluationResult:
         critical_failure_flag: ``1`` = falha crítica confirmada; ``0`` = sem
             falha; ``None`` = ainda não anotado.
         critical_failure_note: justificativa textual da anotação (opcional).
+        server_mode: modo de implantação dos servidores vLLM — ``"managed"``
+            (padrão, subprocesso local via ``VLLMServerManagerAdapter``) ou
+            ``"external"`` (servidores pré-existentes via túnel, ADR-014).
+        served_model_id: identificador do modelo confirmado via probe
+            ``GET /v1/models`` (sonda de proveniência, ADR-014); vazio se a
+            sonda não foi executada ou falhou.
+        determinism_verified: ``True`` se o probe de determinismo do juiz foi
+            executado com sucesso (mesma resposta em 2 chamadas idênticas);
+            ``False`` se a verificação falhou ou foi ignorada (ADR-014).
 
     Raises:
         InteligenciomicaEvalError: se ``determinism_regime`` não for uma
@@ -139,6 +148,9 @@ class EvaluationResult:
     determinism_regime: DeterminismRegime
     critical_failure_flag: int | None
     critical_failure_note: str | None
+    server_mode: str = "managed"
+    served_model_id: str = ""
+    determinism_verified: bool = True
 
     def __post_init__(self) -> None:
         # Validação estrutural: regime não pode ser ausente nem de tipo inválido.
@@ -216,16 +228,26 @@ class EvaluationResult:
         metrics: MetricVector,
         final_score: FinalScore,
         regime: DeterminismRegime,
+        *,
+        server_mode: str | None = None,
+        served_model_id: str | None = None,
+        determinism_verified: bool | None = None,
     ) -> EvaluationResult:
         """Retorna nova instância com métricas, score e regime atualizados (§5.4).
 
         Usado após a passada de julgamento para preencher os resultados
-        computados sem mutar o objeto original.
+        computados sem mutar o objeto original. Os campos de proveniência de
+        servidor (``server_mode``, ``served_model_id``, ``determinism_verified``)
+        são preservados do objeto original quando não fornecidos (ADR-014).
 
         Args:
             metrics: novo vetor de métricas.
             final_score: novo score final agregado.
             regime: regime de determinismo do juiz utilizado.
+            server_mode: modo de implantação; ``None`` preserva o valor atual.
+            served_model_id: id do modelo confirmado por probe; ``None`` preserva.
+            determinism_verified: resultado do probe de determinismo; ``None``
+                preserva o valor atual.
 
         Returns:
             Nova :class:`EvaluationResult` com os campos atualizados.
@@ -235,6 +257,15 @@ class EvaluationResult:
             metrics=metrics,
             final_score=final_score,
             determinism_regime=regime,
+            server_mode=server_mode if server_mode is not None else self.server_mode,
+            served_model_id=(
+                served_model_id if served_model_id is not None else self.served_model_id
+            ),
+            determinism_verified=(
+                determinism_verified
+                if determinism_verified is not None
+                else self.determinism_verified
+            ),
         )
 
     def with_human_annotation(

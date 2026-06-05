@@ -147,6 +147,10 @@ class _Config:
     model_spec_map: dict[str, ModelSpec] = field(
         default_factory=lambda: {_GEN_MODEL: _GEN_SPEC, _JUDGE_MODEL: _JUDGE_SPEC}
     )
+    # Proveniência (TAREFA-311, ADR-014)
+    server_mode: str = "managed"
+    config_hash: str = "abcd1234" * 8  # 64-char dummy SHA-256
+    endpoints_provenance: dict[str, object] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

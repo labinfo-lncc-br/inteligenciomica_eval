@@ -76,6 +76,7 @@ class TestRunWithFakeContainerSucceeds:
             rank_scores=(),
             duration_s=0.1,
             failed_waves=(),
+            endpoints_provenance={},
         )
 
         async def _fake_execute(**kwargs: object) -> ExperimentReport:
@@ -98,7 +99,7 @@ class TestRunWithFakeContainerSucceeds:
             return dataclasses.replace(container, experiment_uc=mock_uc)
 
         with patch(
-            "inteligenciomica_eval.infrastructure.wiring.build_container",
+            "inteligenciomica_eval.cli.build_container",
             side_effect=_patched_build_container,
         ):
             result = runner.invoke(
@@ -124,7 +125,7 @@ class TestRunMissingEnvVarExits1:
             )
 
         with patch(
-            "inteligenciomica_eval.infrastructure.wiring.build_container",
+            "inteligenciomica_eval.cli.build_container",
             side_effect=_raise_config_error,
         ):
             result = runner.invoke(
@@ -149,7 +150,7 @@ class TestRunMissingEnvVarExits1:
             )
 
         with patch(
-            "inteligenciomica_eval.infrastructure.wiring.build_container",
+            "inteligenciomica_eval.cli.build_container",
             side_effect=_raise_config_error,
         ):
             result = runner.invoke(
@@ -182,7 +183,7 @@ class TestRunKeyboardInterruptExits130:
             return dataclasses.replace(container, experiment_uc=mock_uc)
 
         with patch(
-            "inteligenciomica_eval.infrastructure.wiring.build_container",
+            "inteligenciomica_eval.cli.build_container",
             side_effect=_patched_build_container,
         ):
             result = runner.invoke(
@@ -222,7 +223,7 @@ class TestDryRunShowsQuestionCount:
         )
 
         with patch(
-            "inteligenciomica_eval.infrastructure.wiring.build_container",
+            "inteligenciomica_eval.cli.build_container",
             side_effect=lambda *a, **k: _bfc(a[0]),
         ):
             result = runner.invoke(

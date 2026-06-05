@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import pydantic
 import yaml
@@ -154,6 +154,11 @@ class RoundConfig(BaseModel):
     scoring: ScoringConfig
     experiment_b: ExperimentBConfig | None = None
     annotation: AnnotationConfig | None = None
+    # Modo de implantação dos servidores vLLM (ADR-014, TAREFA-311).
+    # "managed" = subprocesso local via VLLMServerManagerAdapter (default).
+    # "external" = servidores pré-existentes acessados por túnel; cada modelo
+    #   no registry deve ter endpoint_env configurado.
+    server_mode: Literal["managed", "external"] = "managed"
 
     @field_validator("phases")
     @classmethod

@@ -4,19 +4,26 @@ ADR-001 extensão aprovada: wiring em ``infrastructure/`` conecta adapters ↔ u
 sem framework DI de terceiros (containers de DI violam a inversão de dependência limpa;
 um dataclass simples é suficiente e auditável). Referência: ADR-001, §8 blueprint.
 
-Dois pontos de entrada públicos:
+Três pontos de entrada públicos:
 - :func:`build_container` — adapters reais; valida env vars obrigatórias.
 - :func:`build_fake_container` — fakes de ``tests/`` (lazy import); usado em ``--dry-run``
   e em testes unitários sem necessidade de rede/GPU.
+
+Modos de implantação (ADR-014, TAREFA-311):
+- ``server_mode="managed"`` (default): ``VLLMServerManagerAdapter`` cria subprocessos locais.
+- ``server_mode="external"``: ``ExternalVLLMServerManager`` acessa servidores pré-existentes
+  via túnel (ex.: SSH tunnel). Cada modelo no registry deve ter ``endpoint_env`` configurado.
 """
 
 from __future__ import annotations
 
+import os
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -91,6 +98,12 @@ class _ExperimentConfig:
 
     Constrói os campos extras que o RunExperimentUseCase e RunGenerationPassUseCase
     precisam mas que não existem diretamente no RoundConfig Pydantic.
+
+    Campos de proveniência (TAREFA-311, ADR-014):
+    - ``server_mode``: ``"managed"`` ou ``"external"``.
+    - ``generator_served_model_ids``: mapa ``{llm: served_model_id}`` dos geradores.
+    - ``judge_determinism_verified``: resultado do probe de determinismo do juiz.
+    - ``endpoints_provenance``: dict completo por endpoint (para ``ExperimentReport``).
     """
 
     phases: list[str]
@@ -107,6 +120,11 @@ class _ExperimentConfig:
     model_registry: tuple[ModelWaveSpec, ...]
     model_spec_map: dict[str, ModelSpec]
     retrieval: _RetrievalConfig
+    server_mode: str = "managed"
+    config_hash: str = ""
+    generator_served_model_ids: dict[str, str] = dataclass_field(default_factory=dict)
+    judge_determinism_verified: bool = True
+    endpoints_provenance: dict[str, object] = dataclass_field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +235,168 @@ class _VLLMGeneratorFactory:
 
 
 # ---------------------------------------------------------------------------
+# Helpers para modo external (ADR-014, TAREFA-311)
+# ---------------------------------------------------------------------------
+
+
+def _build_external_server_manager(
+    config: object,
+    registry_entries: list[object],
+    manager_cls: type[Any],  # ExternalVLLMServerManager — evita import circular no topo
+) -> Any:
+    """Constrói ExternalVLLMServerManager após validar endpoint_env de cada modelo.
+
+    Para cada modelo no registry verifica:
+    1. ``entry.endpoint_env`` não é ``None``.
+    2. A env var referenciada existe no ambiente de execução.
+
+    Em caso de violação levanta :class:`ConfigValidationError` imediatamente.
+
+    Args:
+        config: :class:`RoundConfig` com ``server_mode=="external"``.
+        registry_entries: lista de :class:`ModelEntry` do registry carregado.
+        manager_cls: classe ``ExternalVLLMServerManager`` (injetada para evitar
+            import circular no topo do módulo).
+
+    Returns:
+        Instância de ``ExternalVLLMServerManager`` com ``endpoint_map`` preenchido.
+
+    Raises:
+        ConfigValidationError: se algum modelo não tiver ``endpoint_env`` ou a
+            env var não estiver definida no ambiente.
+    """
+    endpoint_map: dict[str, str] = {}
+    for entry in registry_entries:
+        name: str = entry.name  # type: ignore[attr-defined]
+        env_var: str | None = entry.endpoint_env  # type: ignore[attr-defined]
+        if env_var is None:
+            raise ConfigValidationError(
+                f"models.{name}.endpoint_env",
+                f"campo obrigatório em server_mode='external': "
+                f"modelo {name!r} não tem endpoint_env configurado no registry. "
+                "Adicione 'endpoint_env: NOME_DA_ENV_VAR' ao registry YAML.",
+            )
+        url = os.environ.get(env_var)
+        if not url:
+            raise ConfigValidationError(
+                f"models.{name}.endpoint_env",
+                f"env var {env_var!r} (endpoint de {name!r}) não está definida. "
+                "Configure a variável de ambiente antes de executar no modo external.",
+            )
+        endpoint_map[name] = url
+        _log.debug("external_endpoint_resolved", model=name, env_var=env_var)
+
+    return manager_cls(endpoint_map=endpoint_map)
+
+
+def _mask_url(url: str) -> str:
+    """Mascara o path de uma URL mantendo host:porta para auditoria de topologia."""
+    from urllib.parse import urlparse
+
+    p = urlparse(url)
+    return f"{p.scheme}://{p.netloc}/***"
+
+
+def _run_endpoint_probes(
+    *,
+    generator_urls: dict[str, str],
+    judge_url: str | None,
+    server_mode: str,
+    judge_model: str,
+    config_hash: str = "",
+) -> tuple[dict[str, str], bool, dict[str, object]]:
+    """Executa probes de proveniência de forma síncrona (best-effort, ADR-014).
+
+    Rodam em ambos os modos (``managed`` e ``external``) como auditoria. Falha
+    silenciosa: endpoints inacessíveis produzem ``""`` / ``False`` / ``"unknown"``.
+
+    Args:
+        generator_urls: mapeamento ``{llm_name: url}`` dos geradores.
+        judge_url: URL do juiz (``None`` se não disponível).
+        server_mode: ``"managed"`` ou ``"external"``.
+        judge_model: nome lógico do modelo juiz.
+        config_hash: SHA-256 canônico da config (incluído no dict de proveniência).
+
+    Returns:
+        Tupla ``(generator_served_model_ids, judge_determinism_verified, endpoints_provenance)``.
+    """
+    import asyncio as _asyncio
+
+    from inteligenciomica_eval.infrastructure.provenance.endpoint_probe import (
+        probe_judge_determinism,
+        probe_served_model,
+        probe_vllm_version,
+    )
+
+    async def _probes() -> tuple[dict[str, str], bool, dict[str, object]]:
+        gen_served: dict[str, str] = {}
+        gen_vllm_ver: dict[str, str] = {}
+        for name, url in generator_urls.items():
+            try:
+                gen_served[name] = await probe_served_model(url) or ""
+                gen_vllm_ver[name] = (await probe_vllm_version(url)) or "unknown"
+            except Exception:
+                gen_served[name] = ""
+                gen_vllm_ver[name] = "unknown"
+
+        # Inicia False: só True se probe executar e confirmar determinismo (ADR-014).
+        judge_det: bool = False
+        judge_ver: str | None = None
+        judge_served: str = ""
+        judge_healthy: bool = False
+
+        if judge_url:
+            try:
+                judge_served = await probe_served_model(judge_url) or ""
+                judge_ver = await probe_vllm_version(judge_url)
+                judge_det = await probe_judge_determinism(judge_url)
+                judge_healthy = True
+            except Exception:
+                pass  # judge_det permanece False — verificação não comprovada
+
+        n_gens = len(generator_urls)
+        topology_note = (
+            f"server_mode={server_mode}; "
+            f"{n_gens} generator(s); "
+            f"judge={'present' if judge_url else 'absent'}"
+        )
+
+        ep_prov: dict[str, object] = {
+            "server_mode": server_mode,
+            "config_hash": config_hash,
+            "topology": topology_note,
+            "judge": {
+                "logical_name": judge_model,
+                "served_model_id": judge_served,
+                "vllm_version": judge_ver or "unknown",
+                "endpoint_masked": _mask_url(judge_url) if judge_url else "N/A",
+                "healthy": judge_healthy,
+                "determinism_verified": judge_det,
+            },
+            "generators": {
+                name: {
+                    "served_model_id": gen_served.get(name, ""),
+                    "vllm_version": gen_vllm_ver.get(name, "unknown"),
+                    "endpoint_masked": _mask_url(url),
+                    "healthy": bool(gen_served.get(name)),
+                }
+                for name, url in generator_urls.items()
+            },
+        }
+        return gen_served, judge_det, ep_prov
+
+    try:
+        loop = _asyncio.new_event_loop()
+        result = loop.run_until_complete(_probes())
+        loop.close()
+        return result
+    except Exception as exc:
+        _log.warning("endpoint_probes_failed", error=str(exc))
+        # False: loop de probes não completou — verificação não comprovada (ADR-014).
+        return {}, False, {"server_mode": server_mode, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # build_container — adapters reais
 # ---------------------------------------------------------------------------
 
@@ -252,7 +432,10 @@ def build_container(
         ConfigValidationError: se ``VLLM_GENERATOR_URL``, ``VLLM_JUDGE_URL`` ou
             ``QDRANT_URL`` não estiver configurada.
     """
-    _validate_endpoints(settings)
+    # No modo external, as env vars de endpoint são fornecidas via endpoint_env de cada
+    # modelo — VLLM_GENERATOR_URL / VLLM_JUDGE_URL não são obrigatórias.
+    if config.server_mode == "managed":
+        _validate_endpoints(settings)
 
     from inteligenciomica_eval.application.use_cases.annotation_workflow import (
         AnnotationConfig as AppAnnotationConfig,
@@ -261,6 +444,9 @@ def build_container(
     from inteligenciomica_eval.domain.services.rank_score import DEFAULT_WEIGHTS
     from inteligenciomica_eval.infrastructure.adapters.deterministic_metrics import (
         DeterministicMetricsAdapter,
+    )
+    from inteligenciomica_eval.infrastructure.adapters.external_vllm_server_manager import (
+        ExternalVLLMServerManager,
     )
     from inteligenciomica_eval.infrastructure.adapters.prometheus_judge import (
         PrometheusJudgeAdapter,
@@ -280,6 +466,9 @@ def build_container(
     from inteligenciomica_eval.infrastructure.config.model_registry import (
         load_model_registry,
         to_wave_spec,
+    )
+    from inteligenciomica_eval.infrastructure.config.provenance import (
+        collect_provenance,
     )
     from inteligenciomica_eval.infrastructure.prompts.registry import (
         get_default_registry,
@@ -316,6 +505,43 @@ def build_container(
     # Filtra fases se --phase foi especificado; caso contrário usa o YAML.
     phases_to_run = phases if phases is not None else config.phases
 
+    # --- Seleção de server_manager ANTES dos adapters pesados (fail-fast, ADR-014) ---
+    # external: valida endpoint_env de cada modelo (→ ConfigValidationError imediata).
+    # managed: default (sem validação extra aqui).
+    if config.server_mode == "external":
+        server_manager: VLLMServerManagerPort = _build_external_server_manager(
+            config, registry_entries, ExternalVLLMServerManager
+        )
+        # URLs dos geradores e do juiz vêm do endpoint_map do adapter externo.
+        _ext_mgr = server_manager
+        _ext_map: dict[str, str] = getattr(_ext_mgr, "_endpoint_map", {})
+        _judge_model_name: str = config.judge.model
+        _gen_urls: dict[str, str] = {
+            name: url for name, url in _ext_map.items() if name != _judge_model_name
+        }
+        _judge_url_probe: str | None = _ext_map.get(_judge_model_name)
+    else:
+        server_manager = VLLMServerManagerAdapter()
+        # Modo managed: usa VLLM_GENERATOR_URL para todos os geradores e VLLM_JUDGE_URL.
+        _judge_model_name = config.judge.model
+        _gen_urls = dict.fromkeys(config.llms, settings.VLLM_GENERATOR_URL)
+        _judge_url_probe = settings.VLLM_JUDGE_URL
+
+    # --- Proveniência canônica da config (hash estável) ---
+    _prov = collect_provenance(config)
+
+    # --- Probes de proveniência (ambos os modos, best-effort, ADR-014) ---
+    _gen_served_ids, _judge_det_verified, _ep_provenance = _run_endpoint_probes(
+        generator_urls=_gen_urls,
+        judge_url=_judge_url_probe,
+        server_mode=config.server_mode,
+        judge_model=_judge_model_name,
+        config_hash=_prov.config_hash,
+    )
+
+    # --- PromptRegistry — necessário antes do storage (prompt_version) ---
+    prompt_registry = get_default_registry()
+
     exp_config = _ExperimentConfig(
         phases=phases_to_run,
         bases=config.bases,
@@ -339,11 +565,32 @@ def build_container(
         model_registry=wave_specs,
         model_spec_map=model_spec_map,
         retrieval=_RetrievalConfig(top_k=config.retrieval.top_k),
+        server_mode=config.server_mode,
+        config_hash=_prov.config_hash,
+        generator_served_model_ids=_gen_served_ids,
+        judge_determinism_verified=_judge_det_verified,
+        endpoints_provenance=_ep_provenance,
     )
 
     # --- Adapters de armazenamento ---
     data_dir = base_dir / "data"
-    storage = ParquetStorage(base_dir=data_dir, round_id=config.round_id)
+    # vllm_version preferida a partir do endpoint probe do juiz; fallback: pkg metadata.
+    _ep_judge: Any = _ep_provenance.get("judge") or {}
+    _probed_vllm_ver: str = str(_ep_judge.get("vllm_version") or _prov.vllm_version)
+    storage = ParquetStorage(
+        base_dir=data_dir,
+        round_id=config.round_id,
+        judge_model=config.judge.model,
+        embedding_model=config.retrieval.embedding_model,
+        chunk_strategy=config.retrieval.chunk_strategy,
+        reranker=config.retrieval.reranker or "none",
+        top_k=config.retrieval.top_k,
+        temperature=config.temperature,
+        vllm_version=_probed_vllm_ver,
+        ragas_version=_prov.ragas_version,
+        config_hash=_prov.config_hash,
+        prompt_version=prompt_registry.prompt_version,
+    )
 
     # --- Adapters de rede ---
     collection_map = {base: base for base in config.bases}
@@ -353,8 +600,13 @@ def build_container(
         top_k=config.retrieval.top_k,
     )
 
-    judge_url = settings.VLLM_JUDGE_URL
-    prompt_registry = get_default_registry()
+    # Em external mode, usar a URL do endpoint_env validado no registry (ADR-014).
+    # Em managed mode, usar a env var global VLLM_JUDGE_URL.
+    judge_url: str = (
+        _judge_url_probe
+        if config.server_mode == "external" and _judge_url_probe
+        else settings.VLLM_JUDGE_URL
+    )
     rubric_judge = PrometheusJudgeAdapter(
         judge_url=judge_url,
         registry=prompt_registry,
@@ -367,7 +619,6 @@ def build_container(
     )
     metric_suite = RAGASLayer1Adapter(config=ragas_config)
     deterministic_metric = DeterministicMetricsAdapter()
-    server_manager = VLLMServerManagerAdapter()
 
     port_to_model = {spec.port: name for name, spec in model_spec_map.items()}
     generator_factory = _VLLMGeneratorFactory(port_to_model)

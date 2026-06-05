@@ -321,6 +321,26 @@ class ModelSwitchError(InteligenciomicaEvalError):
         self.reason = reason
 
 
+class EndpointUnreachableError(InteligenciomicaEvalError):
+    """Endpoint externo não pôde ser alcançado ou não respondeu ao probe de saúde.
+
+    Levantada pelo ``ExternalVLLMServerManager`` quando um servidor pré-existente
+    (modo ``external``) não responde ao ``GET /health`` dentro do prazo (ADR-014).
+
+    Args:
+        model_name: nome do modelo cujo endpoint está inacessível.
+        reason: descrição técnica do motivo da falha.
+    """
+
+    def __init__(self, model_name: str, reason: str) -> None:
+        super().__init__(
+            f"Endpoint for model {model_name!r} is unreachable: {reason}. "
+            "Verify that the tunnel is active and the URL is correct."
+        )
+        self.model_name = model_name
+        self.reason = reason
+
+
 # ---------------------------------------------------------------------------
 # Estatística
 # ---------------------------------------------------------------------------
