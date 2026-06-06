@@ -1,4 +1,4 @@
-"""Smoke-test do manual de operação (TAREFA-604).
+"""Smoke-test do manual de operação (TAREFA-604, atualizado TAREFA-606).
 
 Percorre ``docs/operations_manual.md``, extrai blocos de código shell (```bash```),
 ignora blocos sob seções marcadas ``[PENDENTE: ...]``, e verifica:
@@ -8,12 +8,14 @@ ignora blocos sob seções marcadas ``[PENDENTE: ...]``, e verifica:
 2. Cada linha com ``curl http://localhost:...`` é sintaticamente válida: deve ter
    pelo menos um argumento de URL no formato ``http://localhost:<porta>/...`` com
    porta numérica e sem caracteres ilegais de URL (espaços não escapados).
+3. As flags obrigatórias citadas no manual existem na saída de
+   ``ielm-eval run --help``: ``--run-id`` e ``--require-verified-determinism``.
 
 Blocos ``curl`` são validados sintaticamente, nunca conectados.
 
 Saída:
-    PASS — todos os subcomandos validados (fora de seções PENDENTE) existem.
-    FAIL — lista de subcomandos inexistentes ou erros de sintaxe curl.
+    PASS — todos os subcomandos e flags validados (fora de seções PENDENTE) existem.
+    FAIL — lista de subcomandos inexistentes, flags ausentes ou erros de sintaxe curl.
 
 Usage::
 
@@ -157,6 +159,40 @@ def _check_subcmd(subcmd: str) -> bool:
     return False
 
 
+def _run_help_output(subcmd: str) -> str:
+    """Retorna a saída de ``ielm-eval <subcmd> --help`` (stdout + stderr combinados)."""
+    venv_bin = Path(sys.executable).parent
+    ielm = venv_bin / "ielm-eval"
+    if ielm.exists():
+        result = subprocess.run(
+            [str(ielm), subcmd, "--help"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        return result.stdout + result.stderr
+    result = subprocess.run(
+        [sys.executable, "-m", "inteligenciomica_eval.cli", subcmd, "--help"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    return result.stdout + result.stderr
+
+
+# Flags obrigatórias a validar na saída de ``ielm-eval run --help`` (TAREFA-606).
+_REQUIRED_RUN_FLAGS: list[str] = [
+    "--run-id",
+    "--require-verified-determinism",
+]
+
+
+def _check_run_flags() -> list[str]:
+    """Retorna lista de flags ausentes na saída de ``ielm-eval run --help``."""
+    help_text = _run_help_output("run")
+    return [flag for flag in _REQUIRED_RUN_FLAGS if flag not in help_text]
+
+
 def main(manual_path: Path = _DEFAULT_MANUAL) -> int:
     """Ponto de entrada principal.
 
@@ -207,8 +243,17 @@ def main(manual_path: Path = _DEFAULT_MANUAL) -> int:
             sys.stdout.write(f"  {err}\n")
         sys.stdout.write("\n")
 
+    # --- 3. Validação de flags obrigatórias em ielm-eval run --help ---
+    missing_flags = _check_run_flags()
+    if _REQUIRED_RUN_FLAGS:
+        sys.stdout.write("Flags obrigatórias em `ielm-eval run --help`:\n")
+        for flag in _REQUIRED_RUN_FLAGS:
+            status = "OK" if flag not in missing_flags else "FAIL"
+            sys.stdout.write(f"  {flag:<40} {status}\n")
+        sys.stdout.write("\n")
+
     # --- Resultado final ---
-    if failed_subcmds or curl_errors:
+    if failed_subcmds or curl_errors or missing_flags:
         if failed_subcmds:
             sys.stderr.write(
                 f"FAIL — subcomandos inexistentes: {', '.join(failed_subcmds)}\n"
@@ -217,6 +262,11 @@ def main(manual_path: Path = _DEFAULT_MANUAL) -> int:
             sys.stderr.write(
                 f"FAIL — {len(curl_errors)} erro(s) de sintaxe curl detectado(s)\n"
             )
+        if missing_flags:
+            sys.stderr.write(
+                f"FAIL — flags ausentes em 'ielm-eval run --help': "
+                f"{', '.join(missing_flags)}\n"
+            )
         return 1
 
     if not unique_subcmds:
@@ -224,7 +274,9 @@ def main(manual_path: Path = _DEFAULT_MANUAL) -> int:
             "PASS — nenhum subcomando ielm-eval encontrado fora de seções PENDENTE.\n"
         )
     else:
-        sys.stdout.write("PASS — todos os subcomandos validados existem na CLI.\n")
+        sys.stdout.write(
+            "PASS — todos os subcomandos e flags validados existem na CLI.\n"
+        )
     return 0
 
 

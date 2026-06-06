@@ -1,10 +1,11 @@
 # Manual de Operação — InteligenciÔmica Eval
 
-**Versão:** 0.1.0 · **Milestone:** M6 · **Atualizado:** 2026-06-03
+**Versão:** 0.1.0 · **Milestone:** M6 · **Atualizado:** 2026-06-05
 
 Este manual descreve os procedimentos operacionais para executar o subsistema de
 validação InteligenciÔmica no nó GH200 do LNCC. Todos os comandos foram validados
-durante M0–M4. A Seção 9 é stub pendente de M5.
+durante M0–M4 e M3 (incluindo modo `external`, TAREFA-311). A Seção 9 é stub pendente
+de M5.
 
 ---
 
@@ -120,6 +121,25 @@ export QDRANT_URL="http://localhost:6333"
 
 > **Segurança (ADR-008):** nunca coloque tokens, senhas ou URLs com credenciais
 > embutidas nos arquivos YAML de configuração. Use exclusivamente variáveis de ambiente.
+
+### Variáveis de endpoint em modo `external` (ADR-014)
+
+Em `server_mode: external` (ver Seção 4-B), **não** há novas variáveis de ambiente
+obrigatórias globais. As URLs dos servidores tunelados são fornecidas via env vars
+**cujos nomes** são declarados no campo `endpoint_env` de cada entrada do
+`model_registry.yaml`. Somente os **nomes** ficam no YAML; os **valores** vêm do ambiente:
+
+| Declaração no YAML | Env var que deve ser definida pelo operador |
+|--------------------|---------------------------------------------|
+| `endpoint_env: VLLM_GEN1_URL` | `export VLLM_GEN1_URL="http://localhost:8010/v1"` |
+| `endpoint_env: VLLM_GEN2_URL` | `export VLLM_GEN2_URL="http://localhost:8011/v1"` |
+| `endpoint_env: VLLM_JUDGE_EXTERNAL_URL` | `export VLLM_JUDGE_EXTERNAL_URL="http://localhost:8020/v1"` |
+
+> Os nomes das env vars (`VLLM_GEN1_URL`, etc.) são definidos pelo operador e devem
+> seguir o padrão de nomes de variáveis de ambiente válidos (maiúsculas, dígitos e
+> sublinhados). O wiring valida que cada `endpoint_env` declarado está presente em
+> `os.environ` na hora de `build_container` — env var ausente gera `ConfigValidationError`
+> imediata.
 
 ### Verificação de ambiente pronto
 
@@ -258,6 +278,161 @@ curl http://localhost:6333/healthz
 
 ---
 
+## Seção 4-B — Modo `external` — servidores pré-existentes via túnel SSH (ADR-014)
+
+### Quando usar
+
+Use o modo `external` quando o vLLM e/ou Qdrant já estão em execução em hosts remotos
+e **não devem ser gerenciados** pelo `ielm-eval` (ex.: cluster compartilhado LNCC,
+nós GH200 arm64 onde o build do vLLM é custoso e pré-provisionado). O `ielm-eval`
+roda numa máquina de controle (x86 com internet) e acessa os servidores por túnel.
+
+`managed` continua sendo o **default** e permanece inalterado: quando omitido, o
+orquestrador (`VLLMServerManagerAdapter`) sobe e derruba os processos vLLM localmente.
+
+### Topologia (diagrama textual)
+
+```
+Máquina de controle (x86)          Cluster GH200 (LNCC)
+┌─────────────────────┐            ┌────────────────────────────────┐
+│                     │  SSH túnel │  node-gpu-0                    │
+│  ielm-eval run      │◄──────────►│    vLLM gerador-1  :8010       │
+│                     │            │    vLLM gerador-2  :8011       │
+│  VLLM_GEN1_URL=     │            │                                │
+│    localhost:8010   │  SSH túnel │  node-gpu-3                    │
+│  VLLM_JUDGE_URL=    │◄──────────►│    vLLM juiz       :8020       │
+│    localhost:8020   │            │                                │
+│  QDRANT_URL=        │  SSH túnel │  node-qdrant                   │
+│    localhost:6333   │◄──────────►│    Qdrant          :6333       │
+└─────────────────────┘            └────────────────────────────────┘
+```
+
+### Configuração do YAML de rodada
+
+```yaml
+# config/experiment_round1_external.yaml
+server_mode: external   # ← ativa modo external (ADR-014)
+# ... demais campos inalterados ...
+```
+
+No `model_registry.yaml`, cada modelo que roda em servidor externo precisa de
+`endpoint_env` com o nome da env var que contém a URL tunelada:
+
+```yaml
+# config/model_registry.yaml (trecho — modo external)
+models:
+  - name: gpt-oss-120b
+    endpoint_env: VLLM_GEN1_URL    # ← nome da env var; NUNCA o valor literal
+    is_judge: false
+    # ... demais campos ...
+  - name: prometheus-8x7b-v2.0
+    endpoint_env: VLLM_JUDGE_EXTERNAL_URL
+    is_judge: true
+    batch_invariant: true
+    # ...
+```
+
+### Túneis SSH — exemplos
+
+Abra um túnel por servidor **antes** de executar o `ielm-eval run`:
+
+```bash
+# Gerador-1 (porta 8010 no nó remoto)
+ssh -N -L localhost:8010:node-gpu-0:8010 usuario@gateway.lncc.br &
+
+# Gerador-2 (porta 8011)
+ssh -N -L localhost:8011:node-gpu-0:8011 usuario@gateway.lncc.br &
+
+# Juiz (porta 8020 no nó gpu-3)
+ssh -N -L localhost:8020:node-gpu-3:8020 usuario@gateway.lncc.br &
+
+# Qdrant (porta 6333)
+ssh -N -L localhost:6333:node-qdrant:6333 usuario@gateway.lncc.br &
+```
+
+Verificar que os túneis estão ativos:
+
+```bash
+curl http://localhost:8010/health
+curl http://localhost:8020/health
+curl http://localhost:6333/healthz
+```
+
+> Resposta esperada de `/health` (vLLM): `{"status":"OK"}`.
+> Resposta esperada de `/healthz` (Qdrant): JSON com `"title":"qdrant - vector search engine"`.
+
+### ⚠ RESPONSABILIDADE DO OPERADOR — modo `external`
+
+> **Neste modo o `ielm-eval` NÃO controla o lançamento dos servidores vLLM.**
+> O operador é inteiramente responsável por garantir que:
+>
+> 1. **O juiz** está em execução com as flags obrigatórias de determinismo (ADR-003):
+>    - `VLLM_BATCH_INVARIANT=1` — proíbe reorganização de batch
+>    - `VLLM_ENABLE_V1_MULTIPROCESSING=0` — sem multiprocessamento V1
+>    - `--temperature 0` / inferência com `temperature=0.0, seed=42`
+>    - `--tensor-parallel-size 1` (prometheus-8x7b-v2.0)
+>
+>    Exemplo de comando para subir o juiz no nó remoto:
+>    ```bash
+>    VLLM_BATCH_INVARIANT=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 \
+>      python -m vllm.entrypoints.openai.api_server \
+>        --model prometheus-eval/prometheus-8x7b-v2.0 \
+>        --port 8020 \
+>        --tensor-parallel-size 1 \
+>        --max-model-len 4096 \
+>        --quantization awq
+>    ```
+>
+> 2. **Cada endpoint serve o modelo esperado** — o `ielm-eval` verifica via sonda
+>    (`GET /v1/models`) e grava o resultado, mas **não pode corrigir** um endpoint
+>    apontando para o modelo errado.
+>
+> O `ielm-eval` **executa sondas de proveniência** automaticamente antes do ciclo
+> e exibe os resultados num painel Rich. Use `--require-verified-determinism` para
+> runs de qualidade de publicação (aborta com exit 1 se o probe do juiz falhar).
+
+### Executando em modo `external`
+
+```bash
+ielm-eval run \
+  --config config/experiment_round1_external.yaml \
+  --run-id <run_id> \
+  --require-verified-determinism
+```
+
+### Auditando a proveniência da rodada
+
+Cada linha do Parquet contém três colunas de proveniência:
+
+| Coluna Parquet | Tipo | Descrição |
+|----------------|------|-----------|
+| `server_mode` | string | `"managed"` ou `"external"` |
+| `served_model_id` | string | ID do modelo confirmado por sonda (`GET /v1/models`) |
+| `determinism_verified` | bool | `True` se as duas completions com `seed=42` foram idênticas |
+
+> **Regra (ADR-014):** `determinism_verified` é `False` por default — sem prova,
+> sem `True`. Só fica `True` se a sonda executar **e** confirmar tokens idênticos.
+
+O run report (log estruturado ao final do ciclo) inclui a seção `endpoints_provenance`
+com `config_hash`, topologia, endpoint mascarado (`scheme://host:port/***`),
+`vllm_version` por gerador e flag `judge_det`:
+
+```json
+{
+  "endpoints_provenance": {
+    "config_hash": "a3f2b1c9...",
+    "topology": "external",
+    "generators": [
+      {"name": "gpt-oss-120b", "endpoint_masked": "http://localhost:8010/***",
+       "healthy": true, "vllm_version": "0.4.2", "served_model_id": "gpt-oss-120b"}
+    ],
+    "judge_det": true
+  }
+}
+```
+
+---
+
 ## Seção 5 — Executando a Rodada 1 (Experimentos A e B)
 
 ### Dry-run (validação sem GPU/rede)
@@ -273,17 +448,60 @@ mascarados. Qualquer erro de configuração aparece aqui, antes de consumir GPU.
 
 ### Execução completa
 
-> **[PENDENTE: integração CLI full run — TAREFA-310]** O subcomando `run` sem `--dry-run`
-> responde hoje com `"Full run not yet implemented"` e termina com código 1. A
-> orquestração de ondas (M3), os use-cases de geração/métricas/juiz (TAREFA-304..307) e
-> o hardware GH200 estão prontos; a integração final entre a CLI e esses use-cases
-> (TAREFA-310) ainda não foi implementada. Quando entrar, o comando será:
->
-> ```
-> ielm-eval run --config config/experiment_round1.yaml
-> ```
->
-> Até lá, use `--dry-run` para validar a configuração e o mapa GPU/onda.
+```bash
+ielm-eval run --config config/experiment_round1.yaml --run-id <run_id>
+```
+
+`--run-id` é **obrigatório** para execuções reais (identifica o run no armazenamento
+Parquet e é usado para retomar execuções interrompidas). Opções relevantes:
+
+| Flag | Padrão | Descrição |
+|------|--------|-----------|
+| `--phase A\|B\|both` | `both` | Executa somente a fase A, somente a B, ou ambas |
+| `--serial` | desligado | Serializa geradores (1 onda/modelo); contra ADR-012, útil para hardware single-GPU ou depuração |
+| `--require-verified-determinism` | desligado | Em `server_mode='external'`: aborta (exit 1) se o probe de determinismo do juiz retornar `False` (ver Seção 4-B) |
+
+> `--run-id` é ignorado em `--dry-run`. Use o **mesmo** `<run_id>` para retomar uma
+> execução interrompida — a resumabilidade por `row_id` (ADR-009) garante que apenas
+> linhas ausentes são recomputadas.
+
+### De onde vêm as perguntas
+
+As perguntas do benchmark são carregadas de um arquivo JSONL referenciado pelo campo
+`questions:` no YAML de rodada (RF4/P4):
+
+```yaml
+# config/experiment_round1.yaml (trecho)
+questions: "config/questions.yaml"   # path relativo ao diretório do YAML de rodada
+```
+
+Se `questions:` for omitido, o `ielm-eval` usa o arquivo empacotado no pacote Python
+(`questions_rf1.jsonl`, 13 perguntas RF1 — preencher antes da Rodada 1 de produção).
+
+**Formato do arquivo de perguntas** (JSONL — uma entrada por linha):
+
+```json
+{"question_id": "resistencia-beta-lactamicos",
+ "text": "Quais são os principais mecanismos de resistência bacteriana...",
+ "ground_truth": "Os principais mecanismos incluem: (1) produção de beta-lactamases..."}
+```
+
+**Multi-área de conhecimento:** cada área usa seu próprio arquivo de perguntas e um
+YAML de rodada próprio que o referencia:
+
+```
+config/
+  questions_resistencia.yaml      ← perguntas de resistência bacteriana
+  questions_sepse.yaml            ← perguntas de sepse
+  experiment_resistencia.yaml     ← round YAML com questions: config/questions_resistencia.yaml
+  experiment_sepse.yaml           ← round YAML com questions: config/questions_sepse.yaml
+```
+
+Sem nova env var, sem re-release — basta criar o arquivo e atualizar o `questions:` do YAML.
+
+> **Rodada 2 (M5):** `question_id` deve casar exatamente com as entradas de
+> `config/gold_chunks.jsonl` (chunks-ouro curados) para que o funil de retrieval
+> (TAREFA-501+) funcione. Mantenha os IDs consistentes entre os arquivos.
 
 ### Monitorar progresso
 
@@ -483,10 +701,10 @@ ielm-eval status \
 ## Seção 9 — Rodada 2 — funil de retrieval (M5)  `[PENDENTE: M5 não implementado]`
 
 > **Esta seção é um STUB.** O M5 (Rodada 2 — funil OFAT de chunking/embedding) foi
-> deliberadamente adiado; os subcomandos da CLI correspondentes (`funnel` e a fase top-N
-> da Rodada 2) **ainda não existem**. Por isso esta seção **NÃO contém blocos de comando
-> executáveis** — o smoke-test (`scripts/validate_manual.py`) não tem subcomando a
-> validar aqui (blocos sob seção `[PENDENTE: ...]` são ignorados).
+> deliberadamente adiado; os subcomandos da CLI correspondentes (funil de retrieval e a
+> fase top-N da Rodada 2) **ainda não existem**. Por isso esta seção **NÃO contém blocos
+> de comando executáveis** — o smoke-test (`scripts/validate_manual.py`) não tem
+> subcomando a validar aqui (blocos sob seção `[PENDENTE: ...]` são ignorados).
 >
 > Quando o M5 for implementado (TAREFA-501..507), esta seção deverá documentar — em prosa
 > e com os blocos de comando REAIS confirmados via `ielm-eval --help`:
@@ -496,6 +714,10 @@ ielm-eval status \
 >   por `precision@k`, `recall@k`, `MRR`, `nDCG@k` contra os chunks-ouro;
 > - a execução da fase cara (estágio 2, com LLM e juiz) apenas nas top-N configurações
 >   selecionadas pelo funil.
+>
+> **Atenção:** o nome exato do subcomando do funil (ex.: `ielm-eval funnel` ou outro)
+> deve ser verificado na saída de `ielm-eval --help` quando o M5 for implementado.
+> Não use este nome em scripts antes de confirmar via `ielm-eval --help`.
 >
 > **Pré-requisito do M5:** curadoria de chunks-ouro (Premissa P5) entregue. Até lá, o
 > subsistema opera sobre a Rodada 1 (variação base × LLM).
@@ -553,4 +775,4 @@ Gera um relatório Markdown em `docs/judge_validation_report.md`.
 
 ---
 
-*Manual gerado em 2026-06-03 — TAREFA-604 (M6-E9). Próxima revisão: quando M5 for implementado.*
+*Manual atualizado em 2026-06-05 — TAREFA-606 (M6-E9): Seção 4-B modo `external` + `--run-id` + perguntas multi-área. Gerado originalmente em 2026-06-03 (TAREFA-604). Próxima revisão: quando M5 for implementado.*
