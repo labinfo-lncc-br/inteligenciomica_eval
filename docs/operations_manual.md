@@ -231,7 +231,7 @@ validação manual ou depuração, você pode subir os servidores individualment
 **Juiz (GPU 3, residente):**
 
 ```bash
-VLLM_BATCH_INVARIANT=1 VLLM_ENABLE_V1_MULTIPROCESSING=1 \
+VLLM_BATCH_INVARIANT=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 \
   python -m vllm.entrypoints.openai.api_server \
     --model prometheus-eval/prometheus-8x7b-v2.0 \
     --port 8001 \
@@ -309,9 +309,13 @@ Máquina de controle (x86)          Cluster GH200 (LNCC)
 
 ### Configuração do YAML de rodada
 
+Adicione o campo `server_mode: external` ao YAML de rodada existente
+(`config/experiment_round1.yaml`) ou crie uma cópia para uso externo:
+
 ```yaml
-# config/experiment_round1_external.yaml
-server_mode: external   # ← ativa modo external (ADR-014)
+# config/experiment_round1.yaml (trecho — adicionar ou sobrescrever)
+round_id: round-1
+server_mode: external   # ← ativa modo external (ADR-014); default é "managed"
 # ... demais campos inalterados ...
 ```
 
@@ -395,7 +399,7 @@ curl http://localhost:6333/healthz
 
 ```bash
 ielm-eval run \
-  --config config/experiment_round1_external.yaml \
+  --config config/experiment_round1.yaml \
   --run-id <run_id> \
   --require-verified-determinism
 ```
@@ -467,18 +471,21 @@ Parquet e é usado para retomar execuções interrompidas). Opções relevantes:
 
 ### De onde vêm as perguntas
 
-As perguntas do benchmark são carregadas de um arquivo JSONL referenciado pelo campo
-`questions:` no YAML de rodada (RF4/P4):
+As perguntas do benchmark são carregadas a partir da variável de ambiente
+`BENCHMARK_QUESTIONS_PATH` (RF4/P4). Se a variável estiver vazia (default), o `ielm-eval`
+usa o arquivo **empacotado** no pacote Python (`questions_rf1.jsonl`, 13 perguntas RF1
+— preencher antes da Rodada 1 de produção):
 
-```yaml
-# config/experiment_round1.yaml (trecho)
-questions: "config/questions.yaml"   # path relativo ao diretório do YAML de rodada
+```bash
+# Para usar um arquivo externo de perguntas:
+export BENCHMARK_QUESTIONS_PATH="config/questions.jsonl"
+
+# Para usar o arquivo empacotado (default):
+unset BENCHMARK_QUESTIONS_PATH   # ou deixar vazio
 ```
 
-Se `questions:` for omitido, o `ielm-eval` usa o arquivo empacotado no pacote Python
-(`questions_rf1.jsonl`, 13 perguntas RF1 — preencher antes da Rodada 1 de produção).
-
-**Formato do arquivo de perguntas** (JSONL — uma entrada por linha):
+O arquivo deve estar no formato **JSONL** (uma pergunta por linha; linhas em branco e
+linhas de comentário são ignoradas):
 
 ```json
 {"question_id": "resistencia-beta-lactamicos",
@@ -486,18 +493,22 @@ Se `questions:` for omitido, o `ielm-eval` usa o arquivo empacotado no pacote Py
  "ground_truth": "Os principais mecanismos incluem: (1) produção de beta-lactamases..."}
 ```
 
-**Multi-área de conhecimento:** cada área usa seu próprio arquivo de perguntas e um
-YAML de rodada próprio que o referencia:
+**Multi-área de conhecimento:** cada área usa seu próprio arquivo JSONL apontado por
+`BENCHMARK_QUESTIONS_PATH` no momento da execução:
 
-```
-config/
-  questions_resistencia.yaml      ← perguntas de resistência bacteriana
-  questions_sepse.yaml            ← perguntas de sepse
-  experiment_resistencia.yaml     ← round YAML com questions: config/questions_resistencia.yaml
-  experiment_sepse.yaml           ← round YAML com questions: config/questions_sepse.yaml
+```bash
+# Área: resistência bacteriana
+export BENCHMARK_QUESTIONS_PATH="config/questions_resistencia.jsonl"
+ielm-eval run --config config/experiment_round1.yaml --run-id run-resistencia-001
+
+# Área: sepse
+export BENCHMARK_QUESTIONS_PATH="config/questions_sepse.jsonl"
+ielm-eval run --config config/experiment_round1.yaml --run-id run-sepse-001
 ```
 
-Sem nova env var, sem re-release — basta criar o arquivo e atualizar o `questions:` do YAML.
+> **Nota:** o campo `questions:` existe no schema do YAML de rodada mas **não está
+> conectado ao loader** na versão atual — o runtime lê exclusivamente de
+> `BENCHMARK_QUESTIONS_PATH`. Use sempre a env var para trocar o conjunto de perguntas.
 
 > **Rodada 2 (M5):** `question_id` deve casar exatamente com as entradas de
 > `config/gold_chunks.jsonl` (chunks-ouro curados) para que o funil de retrieval
@@ -517,9 +528,6 @@ ielm-eval status --run-id <run_id> --config config/experiment_round1.yaml
 A resumabilidade é garantida por `row_id` (ADR-009): cada linha do Parquet tem um
 `row_id` único (SHA-256 hex dos parâmetros da célula). Ao re-executar, linhas já
 existentes são detectadas via `exists()` e a computação upstream é pulada.
-
-> Quando o full run estiver implementado, basta re-executar o mesmo comando — nenhum
-> flag adicional é necessário.
 
 ### Onde ficam os Parquets gerados
 

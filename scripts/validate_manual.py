@@ -140,39 +140,30 @@ def _curl_errors_in_block(block: str) -> list[str]:
 def _check_subcmd(subcmd: str) -> bool:
     """Retorna True se ``ielm-eval <subcmd> --help`` termina com exit code 0."""
     result = subprocess.run(
-        [sys.executable, "-m", "inteligenciomica_eval.cli", subcmd, "--help"],
+        _cli_argv(subcmd, "--help"),
         capture_output=True,
         check=False,
     )
-    if result.returncode == 0:
-        return True
-    # Tenta via entry point instalado no venv
+    return result.returncode == 0
+
+
+def _cli_argv(subcmd: str, *args: str) -> list[str]:
+    """Retorna o argv canônico para ``ielm-eval <subcmd> [args]``.
+
+    Prefere o entry point instalado no venv; cai de volta em ``-m`` se ausente.
+    Mesmo critério de :func:`_check_subcmd` para consistência.
+    """
     venv_bin = Path(sys.executable).parent
     ielm = venv_bin / "ielm-eval"
     if ielm.exists():
-        result2 = subprocess.run(
-            [str(ielm), subcmd, "--help"],
-            capture_output=True,
-            check=False,
-        )
-        return result2.returncode == 0
-    return False
+        return [str(ielm), subcmd, *args]
+    return [sys.executable, "-m", "inteligenciomica_eval.cli", subcmd, *args]
 
 
 def _run_help_output(subcmd: str) -> str:
     """Retorna a saída de ``ielm-eval <subcmd> --help`` (stdout + stderr combinados)."""
-    venv_bin = Path(sys.executable).parent
-    ielm = venv_bin / "ielm-eval"
-    if ielm.exists():
-        result = subprocess.run(
-            [str(ielm), subcmd, "--help"],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
-        return result.stdout + result.stderr
     result = subprocess.run(
-        [sys.executable, "-m", "inteligenciomica_eval.cli", subcmd, "--help"],
+        _cli_argv(subcmd, "--help"),
         capture_output=True,
         check=False,
         text=True,
