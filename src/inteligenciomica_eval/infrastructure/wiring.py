@@ -800,7 +800,11 @@ def build_fake_container(config: RoundConfig) -> DIContainer:
     )
 
     data_dir = Path(tempfile.mkdtemp())
-    storage = ParquetStorage(base_dir=data_dir, round_id=config.round_id)
+    storage = ParquetStorage(
+        base_dir=data_dir,
+        round_id=config.round_id,
+        prompt_version=config.generation_prompt_version,
+    )
 
     fake_generator = FakeGenerator()
     fake_retriever = StubRetriever()

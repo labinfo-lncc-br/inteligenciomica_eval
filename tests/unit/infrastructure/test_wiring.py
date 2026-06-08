@@ -169,6 +169,120 @@ class TestBuildContainerMissingEnvVars:
 
 
 # ---------------------------------------------------------------------------
+# _VLLMGeneratorFactory — propagação de generation_prompt_version (TAREFA-316)
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_completion() -> object:
+    """Retorna um mock mínimo de ChatCompletion para testes do adapter."""
+    from unittest.mock import MagicMock
+
+    comp = MagicMock()
+    comp.choices = [MagicMock()]
+    comp.choices[0].message.content = "resposta"
+    comp.usage = MagicMock()
+    comp.usage.prompt_tokens = 10
+    comp.usage.completion_tokens = 5
+    return comp
+
+
+@pytest.mark.unit
+class TestVLLMGeneratorFactoryVersionPropagation:
+    """Regressões: trocar prompt_version altera o bundle chamado no wiring."""
+
+    @pytest.mark.asyncio
+    async def test_factory_uses_configured_prompt_version(self) -> None:
+        """_VLLMGeneratorFactory deve chamar render_rag_generation com a versão da config."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from inteligenciomica_eval.domain.ports import Chunk
+        from inteligenciomica_eval.domain.value_objects import LLMId
+        from inteligenciomica_eval.infrastructure.wiring import _VLLMGeneratorFactory
+
+        mock_registry = MagicMock()
+        mock_registry.render_rag_generation.return_value = ("SYS", "USER")
+
+        factory = _VLLMGeneratorFactory(
+            {8000: "model-a"},
+            prompt_registry=mock_registry,
+            prompt_version="v2_experimental",
+        )
+        adapter = factory("http://localhost:8000/v1")
+        adapter._client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+            return_value=_make_fake_completion()
+        )
+
+        await adapter.generate(
+            llm=LLMId("model-a"),
+            question="Q?",
+            contexts=[Chunk(id="c1", text="ctx", score=0.9)],
+            seed=42,
+            temperature=0.0,
+        )
+
+        assert (
+            mock_registry.render_rag_generation.call_args.kwargs["version"]
+            == "v2_experimental"
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_different_versions_call_registry_with_distinct_version(
+        self,
+    ) -> None:
+        """Trocar prompt_version entre v1 e v2 altera a chamada ao registry — prova que o bundle é selecionável por rodada."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from inteligenciomica_eval.domain.ports import Chunk
+        from inteligenciomica_eval.domain.value_objects import LLMId
+        from inteligenciomica_eval.infrastructure.wiring import _VLLMGeneratorFactory
+
+        versions_called: list[str] = []
+
+        def _capture(**kwargs: object) -> tuple[str, str]:
+            versions_called.append(str(kwargs.get("version", "")))
+            return ("SYS", "USER")
+
+        for ver in ("v1_production", "v2_experimental"):
+            mock_registry = MagicMock()
+            mock_registry.render_rag_generation.side_effect = _capture
+
+            factory = _VLLMGeneratorFactory(
+                {8000: "model-a"},
+                prompt_registry=mock_registry,
+                prompt_version=ver,
+            )
+            adapter = factory("http://localhost:8000/v1")
+            adapter._client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+                return_value=_make_fake_completion()
+            )
+            await adapter.generate(
+                llm=LLMId("model-a"),
+                question="Q?",
+                contexts=[Chunk(id="c1", text="ctx", score=0.9)],
+                seed=0,
+                temperature=0.0,
+            )
+
+        assert versions_called == ["v1_production", "v2_experimental"]
+
+    def test_fake_container_storage_prompt_version_matches_config(
+        self, cfg_stub: object
+    ) -> None:
+        """build_fake_container deve propagar generation_prompt_version ao ParquetStorage."""
+        from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
+            ParquetStorage,
+        )
+
+        container = build_fake_container(cfg_stub)  # type: ignore[arg-type]
+        assert isinstance(container.writer, ParquetStorage)
+        # _provenance.prompt_version deve bater com o campo da config
+        assert (
+            container.writer._provenance.prompt_version
+            == cfg_stub.generation_prompt_version  # type: ignore[attr-defined]
+        )
+
+
+# ---------------------------------------------------------------------------
 # Testes de lazy import de fakes
 # ---------------------------------------------------------------------------
 
