@@ -144,7 +144,9 @@ class RowProvenance:
     # Proveniência de servidor (TAREFA-311, ADR-014)
     server_mode: str = "managed"
     served_model_id: str = ""
-    determinism_verified: bool = True
+    determinism_verified: bool = (
+        False  # ADR-014: False por default — sem prova, sem True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -299,12 +301,20 @@ def from_row(row: dict[str, Any]) -> EvaluationResult:  # Any: heterogeneous Par
     flag: int | None = int(raw_flag) if raw_flag is not None else None
 
     # Retrocompatibilidade: colunas de proveniência ausentes → defaults (ADR-014, TAREFA-311).
-    _missing_prov = [c for c in ("server_mode", "served_model_id", "determinism_verified") if c not in row]
+    _missing_prov = [
+        c
+        for c in ("server_mode", "served_model_id", "determinism_verified")
+        if c not in row
+    ]
     if _missing_prov:
         log.warning(
             "parquet_legacy_row_missing_provenance_columns",
             missing=_missing_prov,
-            defaults={"server_mode": "managed", "served_model_id": "", "determinism_verified": True},
+            defaults={
+                "server_mode": "managed",
+                "served_model_id": "",
+                "determinism_verified": False,
+            },
             row_id=row.get("row_id"),
         )
 
@@ -317,7 +327,7 @@ def from_row(row: dict[str, Any]) -> EvaluationResult:  # Any: heterogeneous Par
         critical_failure_note=row.get("critical_failure_note"),
         server_mode=str(row.get("server_mode", "managed")),
         served_model_id=str(row.get("served_model_id", "")),
-        determinism_verified=bool(row.get("determinism_verified", True)),
+        determinism_verified=bool(row.get("determinism_verified", False)),
     )
 
 

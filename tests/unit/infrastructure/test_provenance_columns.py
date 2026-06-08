@@ -30,7 +30,7 @@ def _make_evaluation_result(
     *,
     server_mode: str = "managed",
     served_model_id: str = "",
-    determinism_verified: bool = True,
+    determinism_verified: bool = False,
 ) -> EvaluationResult:
     """Constrói um EvaluationResult mínimo para testes de serialização."""
     from factories.factories import (
@@ -106,7 +106,7 @@ def test_row_provenance_default_served_model_id() -> None:
 
 def test_row_provenance_default_determinism_verified() -> None:
     prov = RowProvenance()
-    assert prov.determinism_verified is True
+    assert prov.determinism_verified is False  # ADR-014: False por default
 
 
 def test_row_provenance_external_mode() -> None:
@@ -137,7 +137,7 @@ def test_evaluation_result_default_served_model_id() -> None:
 
 def test_evaluation_result_default_determinism_verified() -> None:
     result = _make_evaluation_result()
-    assert result.determinism_verified is True
+    assert result.determinism_verified is False  # ADR-014: False por default
 
 
 def test_evaluation_result_external_mode() -> None:
@@ -179,7 +179,7 @@ def test_to_row_default_managed_mode() -> None:
     row = to_row(result)
     assert row["server_mode"] == "managed"
     assert row["served_model_id"] == ""
-    assert row["determinism_verified"] is True
+    assert row["determinism_verified"] is False  # ADR-014: False por default
 
 
 def test_to_row_provenance_overrides_result_fields() -> None:
@@ -275,7 +275,9 @@ def test_from_row_reads_determinism_verified_false() -> None:
     assert result.determinism_verified is False
 
 
-def test_from_row_defaults_when_columns_absent(capsys: pytest.CaptureFixture[str]) -> None:
+def test_from_row_defaults_when_columns_absent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """from_row usa defaults e emite WARNING para colunas ausentes (retrocompat Parquet antigo)."""
     row = _base_row()
     # Remove as 3 novas colunas (simula Parquet antigo)
@@ -287,7 +289,7 @@ def test_from_row_defaults_when_columns_absent(capsys: pytest.CaptureFixture[str
 
     assert result.server_mode == "managed"
     assert result.served_model_id == ""
-    assert result.determinism_verified is True
+    assert result.determinism_verified is False  # ADR-014: sem prova → False
     captured = capsys.readouterr()
     assert "parquet_legacy_row_missing_provenance_columns" in captured.out, (
         "from_row deve emitir WARNING ao encontrar colunas de proveniência ausentes"

@@ -123,7 +123,7 @@ class _ExperimentConfig:
     server_mode: str = "managed"
     config_hash: str = ""
     generator_served_model_ids: dict[str, str] = dataclass_field(default_factory=dict)
-    judge_determinism_verified: bool = True
+    judge_determinism_verified: bool = False  # ADR-014: False por default
     endpoints_provenance: dict[str, object] = dataclass_field(default_factory=dict)
 
 

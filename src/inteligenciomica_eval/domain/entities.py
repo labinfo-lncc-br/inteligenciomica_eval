@@ -150,7 +150,9 @@ class EvaluationResult:
     critical_failure_note: str | None
     server_mode: str = "managed"
     served_model_id: str = ""
-    determinism_verified: bool = True
+    determinism_verified: bool = (
+        False  # ADR-014: False por default — sem prova, sem True
+    )
 
     def __post_init__(self) -> None:
         # Validação estrutural: regime não pode ser ausente nem de tipo inválido.
