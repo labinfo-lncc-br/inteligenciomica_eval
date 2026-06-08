@@ -298,6 +298,16 @@ def from_row(row: dict[str, Any]) -> EvaluationResult:  # Any: heterogeneous Par
     raw_flag = row.get("critical_failure_flag")
     flag: int | None = int(raw_flag) if raw_flag is not None else None
 
+    # Retrocompatibilidade: colunas de proveniência ausentes → defaults (ADR-014, TAREFA-311).
+    _missing_prov = [c for c in ("server_mode", "served_model_id", "determinism_verified") if c not in row]
+    if _missing_prov:
+        log.warning(
+            "parquet_legacy_row_missing_provenance_columns",
+            missing=_missing_prov,
+            defaults={"server_mode": "managed", "served_model_id": "", "determinism_verified": True},
+            row_id=row.get("row_id"),
+        )
+
     return EvaluationResult(
         answer=answer,
         metrics=metrics,

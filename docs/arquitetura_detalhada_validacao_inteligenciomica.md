@@ -259,6 +259,9 @@ Os três compartilham as mesmas entidades de domínio e o mesmo armazenamento Pa
 - `batch_invariant == True` ⇔ a métrica veio de chamada ao juiz; `False` ⇔ veio do gerador. Coerência verificada na escrita.
 - `critical_failure_flag ∈ {0, 1}` quando presente; ausente até a Camada 3 ser ingerida.
 - `seed`, `temperature`, `prompt_version`, `embedding_model`, `chunk_strategy`, `judge_model`, `vllm_version` **sempre** preenchidos (proveniência — RF8).
+- `server_mode ∈ {"managed", "external"}` — modo de implantação dos servidores vLLM (ADR-014; TAREFA-311). Default `"managed"`.
+- `served_model_id` — identificador do modelo confirmado pelo probe `GET /v1/models`; `""` quando não verificável.
+- `determinism_verified` — `False` por default; só `True` se `probe_judge_determinism` confirmar tokens idênticos (ADR-014). Nunca `True` sem prova.
 
 ### 4.4. Serviços de domínio (puros, sem I/O — testáveis sem GPU)
 
@@ -427,6 +430,9 @@ Mantém-se o esquema do doc-base, com **tipagem explícita** e **anotação de o
 | `latency_ms` | `int32` | execução | sim | |
 | `tokens_in` | `int32` | execução | sim | |
 | `tokens_out` | `int32` | execução | sim | |
+| `server_mode` ⊕ | `string` | execução | sim | `"managed"` \| `"external"` — modo de implantação vLLM (ADR-014; TAREFA-311) |
+| `served_model_id` ⊕ | `string` | execução | sim | modelo confirmado pelo probe `GET /v1/models`; `""` se não verificável |
+| `determinism_verified` ⊕ | `bool` | execução | sim | `False` por default (ADR-014); `True` somente se probe de determinismo confirmou tokens idênticos |
 | `timestamp` | `timestamp[us]` | execução | sim | UTC |
 
 **Particionamento físico:** `round_id / experiment_phase / base / llm`. **Idempotência:** `row_id` é a chave; `ResultWriterPort.exists(row_id)` permite pular células já feitas (RF7). **Métricas de retrieval puro** (Rodada 2) vão em dataset separado `retrieval_metrics/` particionado por `round_id / chunk_strategy / embedding_model`, com colunas `precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`.

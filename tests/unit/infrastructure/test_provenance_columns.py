@@ -11,6 +11,7 @@ Verifica que:
 from __future__ import annotations
 
 import pyarrow as pa
+import pytest
 
 from inteligenciomica_eval.domain.entities import EvaluationResult
 from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
@@ -274,8 +275,8 @@ def test_from_row_reads_determinism_verified_false() -> None:
     assert result.determinism_verified is False
 
 
-def test_from_row_defaults_when_columns_absent() -> None:
-    """from_row usa defaults para colunas ausentes (retrocompat com Parquet antigo)."""
+def test_from_row_defaults_when_columns_absent(capsys: pytest.CaptureFixture[str]) -> None:
+    """from_row usa defaults e emite WARNING para colunas ausentes (retrocompat Parquet antigo)."""
     row = _base_row()
     # Remove as 3 novas colunas (simula Parquet antigo)
     del row["server_mode"]
@@ -283,9 +284,14 @@ def test_from_row_defaults_when_columns_absent() -> None:
     del row["determinism_verified"]
 
     result = from_row(row)
+
     assert result.server_mode == "managed"
     assert result.served_model_id == ""
     assert result.determinism_verified is True
+    captured = capsys.readouterr()
+    assert "parquet_legacy_row_missing_provenance_columns" in captured.out, (
+        "from_row deve emitir WARNING ao encontrar colunas de proveniência ausentes"
+    )
 
 
 # ---------------------------------------------------------------------------
