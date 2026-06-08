@@ -1,10 +1,11 @@
 # Security Review — InteligenciÔmica Eval
 
-**Data:** 2026-06-03
-**Tarefa:** TAREFA-605 — Revisão final de segurança (segredos + prompt injection)
+**Data:** 2026-06-08 (atualizado pela TAREFA-314 A2 — ver seção de emendas abaixo)
+**Tarefa original:** TAREFA-605 — Revisão final de segurança (segredos + prompt injection)
+**Última emenda:** TAREFA-314 — Observabilidade segura (mascaramento total, TAREFA-314 A2)
 **Milestone:** M6 — Hardening, validação do juiz e documentação final
 **ADRs relevantes:** ADR-003 (delimitação prompt injection), ADR-008 (segredos via env)
-**Escopo:** M0–M4 (M5 adiado); codebase completo após TAREFA-601–604
+**Escopo:** M0–M4 (M5 adiado); codebase completo após TAREFA-601–604 + TAREFA-314
 
 ---
 
@@ -18,7 +19,7 @@
 | S4 | `subprocess` usa `shell=False` em todos os usos | **PASS** | `grep -rn "shell=True" src/` → sem saída |
 | S5 | Delimitação chunk×instrução no template do juiz (ADR-003) | **PASS** | Template corrigido nesta tarefa — ver seção S5 abaixo |
 | S6 | Teste de chunk malicioso: template delimita corretamente | **PASS** | `pytest -m security` → 5 passed em 0.62s |
-| S7 | Logs não contêm textos completos de ground truth, tokens ou PII | **PASS** | Fix ciclo B: `judge_url` ofuscado com `mask_endpoint()` nos 3 eventos de log do `RAGASLayer1Adapter` — ver seção S7 |
+| S7 | Logs não contêm textos completos de ground truth, tokens ou PII | **PASS** | Fix ciclo B: `judge_url` ofuscado com `mask_endpoint()` no `RAGASLayer1Adapter`. TAREFA-314: mascaramento **total** — helper único `mask_url` (`infrastructure/masking.py`); todos os probes e adapters de rede usam `mask_url`; payload do juiz reduzido para `raw_len`+`raw_snippet[:120]` — ver seção S7-bis |
 | S8 | `uv.lock` commitado (deps reprodutíveis) | **PASS** | `uv.lock` presente e atualizado no repositório |
 | S9 | Nenhuma dependência com vulnerabilidade crítica não mitigada | **PASS** | 2 CVEs encontrados; nenhum crítico no vetor de ataque deste projeto — ver seção S9 |
 
@@ -183,6 +184,70 @@ Verificação dos demais adapters:
   `url` não contém credenciais (vLLM em localhost ou rede interna sem auth)
 
 Nenhum adapter loga `ground_truth`, `generated_answer` (texto completo) nem tokens de API.
+
+---
+
+## S7-bis — Mascaramento total de URLs em logs de infra (TAREFA-314, 2026-06-08)
+
+**Contexto:** A auditoria completa 2026-06-07 identificou mascaramento **parcial** —
+`endpoint_probe.py` logava URLs cruas com path e credenciais; `prometheus_judge.py` logava
+`raw_content=content[:500]` do payload do juiz.
+
+**Correções aplicadas:**
+
+### Helper único `infrastructure/masking.py`
+
+Consolidou os dois `_mask_url` duplicados (em `external_vllm_server_manager.py` e
+`wiring.py`) em um único helper público:
+
+```python
+# infrastructure/masking.py
+def mask_url(url: str) -> str:
+    """Remove credenciais e path; retorna scheme://host:port."""
+    p = urlparse(url)
+    if not p.hostname:
+        return "***"
+    masked = f"{p.scheme}://{p.hostname}"
+    if p.port:
+        masked += f":{p.port}"
+    return masked
+```
+
+Adaptadores atualizados: `external_vllm_server_manager.py`, `wiring.py`.
+
+### Probes mascarados (`endpoint_probe.py`)
+
+Todos os 7 eventos de log (`probe_served_model_ok/empty/failed`,
+`probe_vllm_version_unavailable/failed`, `probe_judge_determinism_ok/failed`) agora usam
+`url=mask_url(...)`. Zero URL crua (com path ou credenciais) em qualquer log de infra.
+
+```bash
+grep -n 'url=' src/inteligenciomica_eval/infrastructure/provenance/endpoint_probe.py
+# Todas as ocorrências mostram mask_url(...)
+```
+
+### Payload do juiz reduzido (`prometheus_judge.py`)
+
+Os dois eventos `prometheus_judge_parse_failure` (ramo JSON inválido e ramo score fora de
+range) e o evento `prometheus_judge_nan` substituíram `raw_content=content[:500]` por:
+
+```python
+raw_len=len(content),
+raw_snippet=content[:120],
+```
+
+Suficiente para triagem sem despejar o payload do LLM nos logs.
+
+**Verificação:**
+
+```bash
+grep -n "raw_content" src/inteligenciomica_eval/infrastructure/adapters/prometheus_judge.py
+# Saída vazia — PASS
+```
+
+**Testes de regressão:** `TestProbesMaskingUrls` (4 testes) e `TestPayloadSecurity`
+(3 testes — inclui ramo `score_out_of_range` corrigido em A2) em
+`tests/unit/infrastructure/`.
 
 ---
 

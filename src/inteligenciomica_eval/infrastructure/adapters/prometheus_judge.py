@@ -213,7 +213,8 @@ class PrometheusJudgeAdapter:
         if not (0.0 <= score <= 1.0):
             _log.warning(
                 "prometheus_judge_parse_failure",
-                raw_content=content[:500],
+                raw_len=len(content),
+                raw_snippet=content[:120],
                 error=f"score={score} out of [0.0, 1.0]",
             )
             raise _ParseFailureError(f"score_out_of_range:{content}")

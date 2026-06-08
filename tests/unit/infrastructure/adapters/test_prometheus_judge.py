@@ -429,6 +429,34 @@ class TestPayloadSecurity:
         assert "raw_snippet" in ev
         assert len(ev["raw_snippet"]) <= 120
 
+    async def test_score_out_of_range_log_no_raw_content(self) -> None:
+        """Ramo score fora de [0.0, 1.0] NÃO deve logar raw_content.
+
+        Este teste falharia antes da correção A2 da TAREFA-314: o segundo bloco
+        de log em _parse_response (score fora de range) ainda usava raw_content[:500].
+        """
+        # JSON válido mas score=1.5 → fora de [0.0, 1.0]
+        payload = '{"score": 1.5, "feedback": "score inválido"}'
+        mock = AsyncMock(return_value=_mock_completion(payload))
+        adapter = _make_adapter(create_mock=mock)
+
+        with structlog.testing.capture_logs() as logs:
+            await adapter.score(_SAMPLE)
+
+        parse_events = [
+            e for e in logs if e.get("event") == "prometheus_judge_parse_failure"
+        ]
+        assert parse_events, (
+            "Deve haver evento de parse_failure para score fora de range"
+        )
+        for ev in parse_events:
+            assert "raw_content" not in ev, (
+                "raw_content não deve ser logado no ramo score_out_of_range (TAREFA-314 A2)"
+            )
+            assert "raw_len" in ev
+            assert "raw_snippet" in ev
+            assert len(ev["raw_snippet"]) <= 120
+
 
 # ---------------------------------------------------------------------------
 # Testes de lifecycle
