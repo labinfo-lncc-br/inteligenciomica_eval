@@ -424,9 +424,16 @@ def _run_dry_run(
             "dry_run_fakes_unavailable",
             hint="Define PYTHONPATH=tests para verificação completa da fiação.",
         )
+        # Mesma precedência de build_container (TAREFA-313):
+        # (a) env BENCHMARK_QUESTIONS_PATH > (b) config.questions > (c) empacotado
         _settings_tmp = RuntimeSettings()
         _qpath = _settings_tmp.BENCHMARK_QUESTIONS_PATH
-        questions = _load_questions(Path(_qpath) if _qpath else None)
+        if _qpath:
+            questions = _load_questions(Path(_qpath))
+        elif getattr(cfg, "questions", None) is not None:
+            questions = _load_questions(config.parent / cfg.questions)  # type: ignore[attr-defined]
+        else:
+            questions = _load_questions(None)
 
     settings = RuntimeSettings()
     n_questions = len(questions)

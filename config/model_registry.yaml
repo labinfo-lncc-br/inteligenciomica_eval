@@ -67,6 +67,8 @@ models:
     is_judge: false
     batch_invariant: false
     extra_args: {}
+    # ADR-014: env var do endpoint tunelado em server_mode=external (ignorada em managed)
+    endpoint_env: "VLLM_GPT_OSS_120B_EXTERNAL_URL"
 
   - name: "gemma4:31b"
     hf_repo: "PENDENTE"          # doc usa `<...>` — definir no M0
@@ -78,6 +80,7 @@ models:
     is_judge: false
     batch_invariant: false
     extra_args: {}
+    endpoint_env: "VLLM_GEMMA4_31B_EXTERNAL_URL"
 
   - name: "qwen3.6:35b"
     hf_repo: "PENDENTE"          # doc usa `<...>` — definir no M0
@@ -89,6 +92,7 @@ models:
     is_judge: false
     batch_invariant: false
     extra_args: {}
+    endpoint_env: "VLLM_QWEN3_6_35B_EXTERNAL_URL"
 
   - name: "glm-4.7-flash"
     hf_repo: "PENDENTE"          # doc usa `<...>` — definir no M0
@@ -100,6 +104,7 @@ models:
     is_judge: false
     batch_invariant: false
     extra_args: {}
+    endpoint_env: "VLLM_GLM_4_7_FLASH_EXTERNAL_URL"
 
   - name: "llama4:16x17b"
     hf_repo: "meta-llama/Llama-4-Scout-17B-16E-Instruct"   # Prompt A TAREFA-301
@@ -111,6 +116,7 @@ models:
     is_judge: false
     batch_invariant: false
     extra_args: {}
+    endpoint_env: "VLLM_LLAMA4_16X17B_EXTERNAL_URL"
 
   # --- Juiz (1) — Prometheus-2 8x7B, batch_invariant: true, GPU 3 (ADR-003/012) ---
   - name: "prometheus-8x7b-v2.0"
@@ -128,3 +134,4 @@ models:
     # batch_invariant=true (ADR-003). Pô-las em extra_args geraria `--VLLM_... valor`
     # (flag de CLI inválida). Vazio até haver flag de CLI real do juiz.
     extra_args: {}
+    endpoint_env: "VLLM_JUDGE_EXTERNAL_URL"

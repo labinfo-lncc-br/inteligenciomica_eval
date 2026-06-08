@@ -7,6 +7,14 @@ round_id: "round-1"
 # Path relativo a este YAML de rodada; carregado à parte pelo DIContainer (TAREFA-309).
 model_registry_path: "model_registry.yaml"
 
+# Arquivo JSONL de perguntas do benchmark (TAREFA-313):
+# Precedência de carregamento (build_container):
+#   (a) env BENCHMARK_QUESTIONS_PATH → override, máxima prioridade
+#   (b) questions (este campo), se definido → path relativo a este YAML
+#   (c) ausente (default) → questions_rf1.jsonl empacotado no pacote Python
+# Para usar o arquivo empacotado de produção, omita este campo (ou deixe-o null).
+# questions: "caminho/para/perguntas.jsonl"
+
 phases:
   - "A"
   - "B"

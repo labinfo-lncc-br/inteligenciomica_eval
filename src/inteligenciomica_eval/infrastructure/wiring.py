@@ -297,6 +297,11 @@ def _mask_url(url: str) -> str:
     return f"{p.scheme}://{p.netloc}/***"
 
 
+def _mask_path(p: Path) -> str:
+    """Exibe apenas o nome do arquivo para log de auditoria (evita vazar layout de disco)."""
+    return f"<...>/{p.name}"
+
+
 def _run_endpoint_probes(
     *,
     generator_urls: dict[str, str],
@@ -623,10 +628,25 @@ def build_container(
     port_to_model = {spec.port: name for name, spec in model_spec_map.items()}
     generator_factory = _VLLMGeneratorFactory(port_to_model)
 
-    # --- BenchmarkLoader — carregado cedo para obter n_questions correto ---
+    # --- BenchmarkLoader — precedência explícita de origem das perguntas (TAREFA-313) ---
+    # (a) BENCHMARK_QUESTIONS_PATH (env) → override, precedência máxima
+    # (b) config.questions, se definido → resolvido relativo ao YAML (base_dir)
+    # (c) default empacotado (questions_rf1.jsonl via importlib.resources)
     questions_path_str = settings.BENCHMARK_QUESTIONS_PATH
-    questions_path: Path | None = (
-        Path(questions_path_str) if questions_path_str else None
+    if questions_path_str:
+        questions_path: Path | None = Path(questions_path_str)
+        _questions_source = "env_override"
+    elif config.questions is not None:
+        questions_path = base_dir / config.questions
+        _questions_source = "round_config"
+    else:
+        questions_path = None
+        _questions_source = "packaged_default"
+
+    _log.info(
+        "wiring_questions_source",
+        source=_questions_source,
+        path=_mask_path(questions_path) if questions_path is not None else "<packaged>",
     )
     _loaded_questions = load_questions(questions_path)
 
