@@ -735,7 +735,7 @@ inteligenciomica_eval/
 │   │   ├── heatmaps.py  boxplots.py  interaction_plots.py
 │   │   ├── radar.py  per_question.py  failure_breakdown.py
 │   │   └── report.py                          # monta HTML/MD
-│   └── cli.py                                 # Typer: run/analyze/report/annotate/serve
+│   └── cli.py                                 # Typer: version/run/annotate/analyze/report/status/show-config/validate-judge
 ├── config/
 │   ├── experiment_round1.yaml
 │   ├── experiment_round2a.yaml                # variação de chunking
