@@ -1,6 +1,8 @@
 # Visão de Alto Nível — Subsistema de Validação do InteligenciÔmica
 
-**Versão:** 1.0 **Data:** 21 de maio de 2026 **Status:** Documento base para discussão com a equipe de desenvolvimento
+**Versão:** 1.1 **Data:** 8 de junho de 2026 **Status:** Documento base (aprovado); atualizado para refletir o as-built de TAREFA-309/310/311/606
+
+> **Changelog v1.1 (08/06/2026):** acréscimo das duas topologias de implantação (managed co-localizado no GH200 vs external via túnel SSH para serviços compartilhados) e da proveniência verificada (ADR-014); nota em §9.4 sobre os campos `server_mode`, `served_model_id` e `determinism_verified` agora registrados no dataset. Demais seções inalteradas.
 
 ---
 
@@ -378,6 +380,15 @@ Quando rodando vários testes simultaneamente (uma por métrica), aplicar corre�
 - **Versionamento** — o `judge_model` é gravado em cada linha do dataset.  
 - **Validação amostral humana** — para \~10% das respostas, comparar o score do juiz com avaliação humana especialista; calcular concordância (Cohen's κ).  
 - **Múltiplos juízes opcionais** — em rodadas futuras, considerar comparar Prometheus-2 com outro juiz (ex.: Claude ou GPT-4o via API) em uma amostra reduzida, para checar consistência.
+
+### 9.4. Topologias de implantação e registro do regime de determinismo
+
+O subsistema suporta duas topologias de implantação, selecionáveis por `server_mode` no YAML de rodada:
+
+- **managed (default):** o ielm-eval lança e derruba os servidores vLLM diretamente no nó GH200, com env totalmente controlado. O determinismo do juiz é **garantido** pelo lançamento (`VLLM_BATCH_INVARIANT=1`, `TP=1`, `temperature=0.0`).
+- **external:** em ambientes de cluster compartilhado (acesso via túnel SSH, arquitetura ARM), os servidores vLLM e Qdrant já estão em execução. O ielm-eval não os controla; `start/stop` são no-op. O determinismo do juiz é **responsabilidade do operador** e apenas **verificado por sonda** ao iniciar o run (ADR-014).
+
+No modo external, a garantia de reprodutibilidade é **compartilhada com o operador**: o ielm-eval confirma por sondas HTTP se o modelo servido é o esperado, registra a versão do vLLM e verifica se dois completions com `seed=42` produzem tokens idênticos. O resultado fica gravado em três campos adicionais do dataset: `server_mode` (topologia), `served_model_id` (modelo realmente carregado) e `determinism_verified` (booleano verificado por sonda, **`False` por default** — nunca `True` sem prova). Para runs de publicação, use `--require-verified-determinism`, que aborta o experimento se a sonda não confirmar determinismo. Ver ADR-014 e `docs/operations_manual.md` Seção 4-B para detalhes operacionais.
 
 ---
 

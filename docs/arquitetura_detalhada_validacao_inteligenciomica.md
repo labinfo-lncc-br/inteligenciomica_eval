@@ -1,11 +1,13 @@
 # Arquitetura Detalhada e Plano de Implementação — Subsistema de Validação do InteligenciÔmica
 
-**Versão:** 1.1
-**Data:** 22 de maio de 2026
+**Versão:** 1.2
+**Data:** 8 de junho de 2026
 **Status:** Proposta arquitetural para execução (deriva do documento de visão de alto nível v1.0, já aprovado pela equipe)
 **Documento-base:** `visao_alto_nivel_validacao_inteligenciomica.md` (v1.0)
 **Aprofunda:** itens 10 (stack), 11 (implementação/codificação) e 12 (riscos) do documento-base.
 **Destino:** servir de espinha dorsal para os prompts da dupla **Claude Code (desenvolvedor)** + **ChatGPT Codex (verificador)**.
+
+> **Changelog v1.2 (08/06/2026):** sincronização com o as-built de TAREFA-309/310/311/312/606. Destaques: (1) mecanismo de perguntas via `RoundConfig.questions` + campo `questions:` no YAML de rodada (multi-área, TAREFA-313); (2) CLI `run` completo com `--run-id` obrigatório, `--phase A|B|both`, `--serial`, `--require-verified-determinism` (§15); (3) modo de implantação `external` — cliente x86 ↔ túnel SSH ↔ servidores vLLM/Qdrant compartilhados no GH200 — com proveniência verificada por sonda (ADR-014, TAREFA-311); (4) três novas colunas de proveniência no schema Parquet 43→46 (`server_mode`, `served_model_id`, `determinism_verified` — **já atualizadas em §§4.3/5.3 no gate 312**, não duplicadas aqui); (5) gate de integração TAREFA-312 (PASS); (6) **ADR-013** (funil da Rodada 2, M5 adiado) e **ADR-014** (managed vs external) adicionados ao catálogo (§6); (7) topologia §7.2 e §12 expandidos com o modo external; (8) §14.6/14.9 reconciliados; (9) §15 alinhado à CLI real (8 subcomandos).
 
 > **Changelog v1.1 (22/05/2026):** correção do hardware — o nó é um **GH200 com 4 GPUs**, integralmente disponível (antes assumido como GPU única). Impacto: Premissa P1 revisada; **ADR-004 reescrito** (alocação concorrente em 4 GPUs em vez de chaveamento sequencial); **novo ADR-012** (estratégia de alocação de GPUs e tensor parallelism); topologia (§7.2), milestone M3 (§14.6) e manual de operação (§15.4–15.8) atualizados. As três camadas de avaliação, ports, esquema de dados e demais ADRs permanecem inalterados.
 
@@ -67,7 +69,7 @@ Decidir, com **evidência estatística e reprodutível**, qual combinação `{ba
 
 ### 2.3. Requisitos não-funcionais (RNF)
 
-- **RNF1 — Reprodutibilidade científica.** O juiz é determinístico bit-a-bit (`VLLM_BATCH_INVARIANT=1`); os geradores são realistas (sem batch invariance). Esta distinção é arquitetural e inviolável (ADR-003).
+- **RNF1 — Reprodutibilidade científica.** O juiz é determinístico bit-a-bit (`VLLM_BATCH_INVARIANT=1`); os geradores são realistas (sem batch invariance). Esta distinção é arquitetural e inviolável (ADR-003). Em modo **`managed`**, o determinismo do juiz é **garantido** pelo lançamento controlado do servidor (GPU dedicada, env fixo). Em modo **`external`**, o servidor vLLM já existe e é compartilhado — o determinismo é **responsabilidade do operador** e apenas **verificado** por sonda (`probe_judge_determinism`), nunca assumido; o resultado fica gravado no campo `determinism_verified` (ADR-014).
 - **RNF2 — Uso eficiente das 4 GPUs.** O nó GH200 tem **4 GPUs** integralmente disponíveis. A arquitetura aloca o juiz numa GPU dedicada (residente) e gira os 5 geradores nas 3 GPUs restantes, em ondas concorrentes, minimizando trocas de modelo (ADR-004/ADR-012).
 - **RNF3 — Robustez a falha do juiz.** Falhas de parsing/NaN do LLM-juiz são esperadas e tratadas com retry + degradação explícita, nunca silenciosa (ADR-007).
 - **RNF4 — Evolutibilidade.** Adicionar um LLM, uma base, uma métrica ou um juiz não pode exigir reescrever o orquestrador — só um adapter e uma entrada de config.
@@ -561,6 +563,30 @@ Cada decisão não-óbvia tem um registro curto (formato `system-architect` §3)
 **Consequências:** Juiz carregado 1×; geradores trocam 1×; geração e julgamento podem pipelinar (ADR-004). `VLLMServerManager` precisa fixar GPU por servidor (`CUDA_VISIBLE_DEVICES`), subir servidores concorrentes em portas distintas e escalonar as ondas. O `model_registry.yaml` ganha `tensor_parallel_size` e atribuição de GPU por modelo.
 **Critério de reversão:** mudança no número de GPUs, ou modelo que exija TP>2.
 
+### ADR-013: Funil de retrieval da Rodada 2 (M5 — adiado)
+
+**Status:** Aceito (M5 — implementação pendente)
+**Contexto:** A Rodada 2 (OFAT chunking/embedding) requer avaliação de dezenas de configurações de retrieval. Rodar geração completa (cara) em todas é inviável.
+**Decisão:** Introduzir um estágio de pré-filtragem com métricas de retrieval puro (precision@k, recall@k, MRR, nDCG@k) contra chunks-ouro; apenas as top-3 configurações seguem para o estágio caro de geração+avaliação (`FunnelSelector`). O resultado do funil é independente dos LLMs.
+**Alternativas:** Geração em todas as configs (rejeitado: custo proibitivo em 4 GPUs); seleção manual (rejeitado: subjetiva, não reprodutível).
+**Consequências:** Gate de entrada para M5: curadoria de chunks-ouro entregue (Premissa P5). `RetrievalFunnelUseCase` implementado em M5, stub em M4. A CLI `run` ganhou `--stage` (M5 futuro) — **ainda não implementado**.
+**Referência:** `docs/adr/ADR-013-round2-funnel.md`
+**Critério de reversão:** mudança no critério de seleção das top-k configs.
+
+### ADR-014: Modo de servidor managed vs external; proveniência verificada por sonda
+
+**Status:** Aceito (TAREFA-311)
+**Contexto:** Em ambiente de cluster compartilhado (GH200 do LNCC, arquitetura ARM), o cliente Python pode não ter privilégios para lançar processos vLLM localmente. Os servidores vLLM e Qdrant podem já estar em execução, acessíveis via túnel SSH, sem controle de ciclo de vida pelo ielm-eval.
+**Decisão:** Introduzir `server_mode: "managed" | "external"` no `RoundConfig`. Em modo `managed` (default), o `VLLMServerManagerAdapter` lança e derruba processos vLLM via `asyncio.create_subprocess_exec`. Em modo `external`, o `ExternalVLLMServerManager` realiza apenas sondas de saúde (`/health`) sem criar processo; `start/stop` são no-op (loga `vllm_server_external_skipped`).
+**Consequências da migração de responsabilidade no modo `external`:**
+- O determinismo do juiz deixa de ser *garantido pelo lançamento* e passa a ser *verificado por sonda* e gravado por linha (`determinism_verified: bool`, default `False` — "nunca `True` sem prova");
+- Três probes ao iniciar: `probe_served_model` (`GET /v1/models` → `served_model_id`), `probe_vllm_version` (`GET /version`), `probe_judge_determinism` (2 completions com `seed=42, temperature=0.0`; `True` se tokens idênticos);
+- `endpoints_provenance` no run report resume topologia, endpoint mascarado (`mask_url()` → `scheme://host:port`), saúde, versão vLLM e `determinism_verified` por servidor;
+- `--require-verified-determinism` aborta o run se `determinism_verified=False` ao término dos probes (para runs de publicação).
+**Referências:** ADR-003 (batch invariance), ADR-004 (ciclo de vida dos servidores), ADR-008 (segredos via env), ADR-012 (alocação de GPUs); `docs/operations_manual.md` Seção 4-B.
+**Referência de arquivo:** `docs/adr/ADR-014-server-mode-external.md`
+**Critério de reversão:** consolidação da infraestrutura em ambientes gerenciáveis pelo processo Python.
+
 ---
 
 ## 7. Stack tecnológica detalhada (aprofunda item 10)
@@ -618,6 +644,37 @@ Versões devem ser **fixadas** em `pyproject.toml` + lock (`uv.lock`). Os númer
 - O **juiz** ocupa uma GPU dedicada (GPU 3), residente, `TP=1`, determinístico (ADR-003/012). Carregado uma única vez por rodada.
 - Os **5 geradores** giram nas GPUs 0–2 em 2 ondas (3 + 2); cada servidor é fixado a uma GPU por `CUDA_VISIBLE_DEVICES` e usa a mesma porta `:8000` (apenas um gerador por GPU; o `base_url` aponta para a instância ativa da onda). Geradores grandes que excedam 1 GPU usam `TP=2` (ADR-012, P1.1).
 - `vllm-generator` (GPUs 0–2) e `vllm-judge` (GPU 3) **coexistem** — daí o pipelining opcional geração↔julgamento (ADR-004). O `serve`/`run` da CLI orquestra esse ciclo de vida.
+
+#### 7.2.1. Modo external (servidores via túnel SSH)
+
+Quando `server_mode: external` (ADR-014), o ielm-eval **não lança nem derruba** os servidores vLLM/Qdrant. Eles já estão em execução no GH200 (ou em outro nó do cluster), acessíveis pelo cliente x86 via túnel SSH ou rede interna.
+
+```
+   cliente x86 (laptop / nó de controle)
+   ┌─────────────────────────────────────────────────────────┐
+   │  ielm-eval run --config ...                             │
+   │  (ExternalVLLMServerManager — start/stop = no-op)      │
+   └────────┬────────────────────┬──────────────────────────┘
+            │ túnel SSH / rede   │ túnel SSH / rede
+            ▼                    ▼
+   ┌────────────────┐   ┌────────────────────────────────────┐
+   │  Qdrant :6333  │   │  nó GH200 (serviços compartilhados)│
+   │  (compartilhado│   │  vllm-gen1 :8000  vllm-gen2 :8010  │
+   │   ou dedicado) │   │  vllm-judge :8001 (residente)      │
+   └────────────────┘   └────────────────────────────────────┘
+```
+
+**Diferenças operacionais em relação ao modo managed:**
+
+| Aspecto | managed (default) | external |
+|---|---|---|
+| Ciclo de vida vLLM | ielm-eval lança/derruba | no-op (serviços já existem) |
+| Determinismo do juiz | **garantido** (env controlado) | **verificado por sonda** (ADR-014) |
+| `determinism_verified` | `True` se probe OK | `True` apenas com prova; `False` por default |
+| GPU fixada por | `CUDA_VISIBLE_DEVICES` | responsabilidade do operador |
+| Endpoints | resolvidos no launch | declarados em `ModelEntry.endpoint_env` |
+
+Ver `docs/operations_manual.md` Seção 4-B para fluxo operacional detalhado.
 
 ---
 
@@ -866,6 +923,28 @@ experiment_b:
 - `--dry-run` valida config, resolve o registry, checa endpoints e imprime o plano de execução (nº de células, ordem de chaveamento de modelos) sem chamar GPU.
 - Lock file (`uv.lock`) commitado; ambiente recriável por `uv sync --frozen`.
 
+### 12.4. Reprodutibilidade no modo external (ADR-014)
+
+No modo **`managed`**, o ielm-eval lança o servidor vLLM com env explícito (`VLLM_BATCH_INVARIANT=1`, `tensor_parallel_size=1`, `temperature=0.0`, `seed=42`), garantindo determinismo bit-a-bit do juiz. No modo **`external`**, o servidor já está em execução — o ielm-eval **não** controla seu env, sua versão nem seu modelo carregado.
+
+Para não assumir silenciosamente determinismo não-verificado, o ielm-eval executa três probes ao iniciar em modo external:
+
+| Probe | Endpoint | O que verifica |
+|---|---|---|
+| `probe_served_model` | `GET /v1/models` | Modelo realmente carregado (`served_model_id`) |
+| `probe_vllm_version` | `GET /version` | Versão do servidor vLLM |
+| `probe_judge_determinism` | 2× completion `seed=42` | Tokens idênticos → `determinism_verified=True` |
+
+O campo `determinism_verified` default é **`False`** — nunca assume `True` sem prova (ADR-014). O run report inclui `endpoints_provenance` com topologia, endpoint mascarado, saúde e resultado das probes por servidor.
+
+Para runs de publicação, use `--require-verified-determinism`: o comando aborta se `determinism_verified` não for `True` ao final das probes.
+
+```bash
+uv run ielm-eval run --config config/experiment_round1.yaml \
+    --run-id <run_id> \
+    --require-verified-determinism   # falha se juiz não confirmou determinismo
+```
+
 ---
 
 ## 13. Riscos aprofundados (aprofunda item 12)
@@ -1009,8 +1088,13 @@ Aplica-se a **todas** as tarefas, herdado das skills:
 | TAREFA-305 | Experimento B no `RunExperimentUseCase` (`base="fixed"`) | rag-engineer | P0 | S | 5×3×13 linhas; mesmos contextos por pergunta |
 | TAREFA-306 | Run report (planejado/concluído/pulado/falha, NaN, latência, versões, **mapa GPU→modelo por onda**) | python-engineer | P0 | M | Sumário persistido; audita regime de determinismo por fase e alocação de GPU |
 | TAREFA-307 | E2E orquestração com stubs simulando 4 GPUs (concorrência + ondas) | test-engineer | P0 | M | Juiz "residente" + 2 ondas de geradores stub, sem GPU real |
+| TAREFA-308 | `AnnotationWorkflowUseCase` + CLI `annotate` (Camada 3) | python-engineer | P0 | M | Export JSONL estratificado; ingest com merge idempotente por `row_id` |
+| TAREFA-309 | DI Wiring + CLI `run` completo + `BenchmarkLoader` | backend-engineer | P0 | L | `--run-id` obrigatório; `--phase A/B/both`; `--serial`; `BenchmarkLoader` resolve `questions:` do YAML |
+| TAREFA-310 | Gate E2E ciclo completo M3 | test-engineer | P0 | M | Pipeline completo (stubs) em ≤60 s; 5 fases Pass |
+| TAREFA-311 | `ExternalVLLMServerManager` + probes de proveniência (ADR-014) | backend-engineer | P0 | M | `server_mode=external`; probes served_model/version/determinism; `determinism_verified=False` default |
+| TAREFA-312 | Gate de integração 309/310/311/606 (PASS) | test-engineer | P0 | S | Retrocompat de logs; `determinism_verified` default confirmado; schema §4.3/§5.3 em 46 colunas |
 
-**Go/no-go:** Rodada 1 (585 respostas) avaliada e persistida; juiz carregado 1× e geradores em ≤2 ondas; run report limpo com mapa GPU→modelo; **gate para análise**.
+**Go/no-go (as-built):** Rodada 1 (585 respostas) avaliada e persistida; juiz carregado 1× e geradores em ≤2 ondas; run report limpo com mapa GPU→modelo; modo external + probes de proveniência implementados e auditados; **gate para análise**.
 
 ---
 
@@ -1066,6 +1150,8 @@ Aplica-se a **todas** as tarefas, herdado das skills:
 | TAREFA-603 | Property-based em parsers/serializers | test-engineer | P1 | S | Roundtrip e idempotência cobertos |
 | TAREFA-604 | Manual de operação final (`docs/operations_manual.md`) | python-engineer | P0 | M | Seção 15 deste doc versionada + validada por execução real |
 | TAREFA-605 | Revisão final de segurança (segredos, prompt injection) | code-reviewer | P1 | S | Nenhum segredo no Git; teste de chunk malicioso |
+| TAREFA-606 | Manual de operação — emenda modo external (ADR-014, Seção 4-B) | python-engineer | P0 | S | Seção 4-B detalhada; `validate_manual.py` PASS |
+| TAREFA-607 | Doc-sync: arquitetura v1.2 + visão v1.1 (TAREFA-309/310/311/312) | python-engineer | P0 | M | Versões bumpadas; ADR-013/014 no catálogo; §7.2/§12/§14 reconciliados |
 
 **Go/no-go:** subsistema reprodutível, auditado e documentado para uso recorrente nas próximas rodadas.
 
@@ -1211,62 +1297,71 @@ Para a **onda 2**: encerrar os 3 processos de geradores (não o juiz na GPU 3), 
 
 ### 15.7. Orquestração automática (modo recomendado)
 
+A CLI `ielm-eval` tem **8 subcomandos**: `version`, `run`, `annotate`, `analyze`, `report`, `status`, `show-config`, `validate-judge`. Para detalhes operacionais do modo `external`, ver `docs/operations_manual.md` Seção 4-B.
+
 O `VLLMServerManager` (TAREFA-302/303) automatiza tudo: sobe o juiz na GPU 3, sobe a onda 1 de geradores nas GPUs 0–2, gera, troca para a onda 2, e (em paralelo ou em seguida) avalia com o juiz residente. O operador roda **um** comando:
 
 ```bash
-# Rodada completa: juiz residente + 2 ondas de geradores + julgamento
-uv run ielm-eval run --config config/experiment_round1.yaml
+# Rodada completa (ambos os experimentos A e B): juiz residente + 2 ondas de geradores
+uv run ielm-eval run --config config/experiment_round1.yaml --run-id <run_id>
 # (internamente: start juiz@GPU3 → onda1 [3 geradores@GPU0-2] → gera → onda2 [2 geradores] → gera
 #  → julga tudo com o juiz residente; resumível por row_id)
 ```
 
-Para controlar fases/layout explicitamente:
+Flags disponíveis em `ielm-eval run`:
 
-```bash
-uv run ielm-eval run --config config/experiment_round1.yaml --phase generation   # só geração (ondas)
-uv run ielm-eval run --config config/experiment_round1.yaml --phase judging      # só julgamento
-uv run ielm-eval run --config config/experiment_round1.yaml --gpu-layout generators_first  # alt. (ADR-012)
-```
+| Flag | Obrigatória | Descrição |
+|---|---|---|
+| `--config` | Sim | Caminho para o YAML de rodada |
+| `--run-id` | Sim | Identificador único da execução (para resumibilidade) |
+| `--phase` | Não | `A`, `B` ou `both` (default `both`) |
+| `--serial` | Não | Executa ondas em série em vez de concorrente (debug) |
+| `--dry-run` | Não | Imprime plano sem tocar GPU/rede |
+| `--require-verified-determinism` | Não | Aborta se `determinism_verified=False` (publicação) |
 
 `--dry-run` imprime o plano antes de tocar a GPU:
 
 ```bash
-uv run ielm-eval run --config config/experiment_round1.yaml --dry-run
+uv run ielm-eval run --config config/experiment_round1.yaml --run-id <run_id> --dry-run
 # imprime: mapa GPU→modelo por onda, nº de células por modelo, células já existentes (puladas), endpoints
 ```
 
 ### 15.8. Fluxo completo de uma rodada (operador)
 
 ```bash
-# 0. Sanidade
-uv run ielm-eval run --config config/experiment_round1.yaml --dry-run
+# 0. Sanidade — valida config sem tocar GPU
+uv run ielm-eval run --config config/experiment_round1.yaml --run-id round_1_<data> --dry-run
 curl -s "$QDRANT_URL/collections" | jq .          # bases existem?
 
-# 1. Geração (juiz na GPU 3 + 2 ondas de geradores nas GPUs 0-2; resumível)
-uv run ielm-eval run --config config/experiment_round1.yaml --phase generation
+# 1. Execução completa (geração em ondas concorrentes + julgamento com juiz residente; resumível)
+uv run ielm-eval run --config config/experiment_round1.yaml --run-id round_1_<data>
+# Experimento A apenas: --phase A | Experimento B apenas: --phase B
+# Modo serial (debug, 1 onda por vez): adicionar --serial
+# Verificação de determinismo obrigatória (publicação): adicionar --require-verified-determinism
 
-# 2. Julgamento (juiz determinístico, residente na GPU 3, carregado 1x)
-uv run ielm-eval run --config config/experiment_round1.yaml --phase judging
-
-# 3. Anotação humana (Camada 3) — exporta priorizando scores baixos
+# 2. Anotação humana (Camada 3) — exporta priorizando scores baixos
 uv run ielm-eval annotate --run-id round_1_<data> --export annotations.jsonl
 #    ... especialista preenche critical_failure_flag ...
 uv run ielm-eval annotate --run-id round_1_<data> --ingest annotations.jsonl
 
-# 4. Agregação + estatística + relatório
+# 3. Agregação + estatística + relatório
 uv run ielm-eval analyze --run-id round_1_<data> --tests all
 uv run ielm-eval report  --run-id round_1_<data> --format html
 ```
 
-### 15.9. Rodada 2 (após curadoria de chunks-ouro)
+### 15.9. Rodada 2 (M5 — pendente)
+
+> **Status M5:** adiado até curadoria de chunks-ouro (Premissa P5) e decisão da Rodada 1.
+> Os subcomandos `--stage retrieval-funnel` e `--stage full` **ainda não existem** na CLI;
+> chegam com o Milestone M5 (ADR-013). Não executar os comandos abaixo até o M5 ser iniciado.
 
 ```bash
-# Estágio 1 — funil de retrieval puro (barato, sem LLM)
-uv run ielm-eval run --config config/experiment_round2a.yaml --stage retrieval-funnel
+# [M5 FUTURO] Estágio 1 — funil de retrieval puro (barato, sem LLM)
+# uv run ielm-eval run --config config/experiment_round2a.yaml --stage retrieval-funnel
 # seleciona top-3 configs de chunking; idem 2b para embedding
 
-# Estágio 2 — geração+avaliação só nas top-3 (reusa o fluxo da Rodada 1)
-uv run ielm-eval run --config config/experiment_round2a.yaml --stage full --top-configs 3
+# [M5 FUTURO] Estágio 2 — geração+avaliação só nas top-3 (reusa o fluxo da Rodada 1)
+# uv run ielm-eval run --config config/experiment_round2a.yaml --stage full --top-configs 3
 ```
 
 ### 15.10. Troubleshooting
