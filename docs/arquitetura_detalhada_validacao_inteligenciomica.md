@@ -135,7 +135,7 @@ Atores externos: o **desenvolvedor sênior** (executa rodadas, analisa) e o **es
 │  │  analyze/  │   │  - compute_metrics│   └───────────────────────────┘    │
 │  │  report/   │   │  - aggregate      │              ▲                      │
 │  │  annotate/ │   │  - statistics     │              │ implementam          │
-│  │  serve/    │   └─────────┬─────────┘   ┌──────────┴───────────────┐     │
+│  │  status/   │   └─────────┬─────────┘   ┌──────────┴───────────────┐     │
 │  └────────────┘             │             │  infrastructure/adapters │     │
 │                             ▼             │  - QdrantRetriever        │     │
 │                   ┌───────────────────┐   │  - VLLMGenerator          │     │
@@ -599,7 +599,7 @@ Versões devem ser **fixadas** em `pyproject.toml` + lock (`uv.lock`). Os númer
 |---|---|---|---|
 | `python` | Runtime | — | 3.11+ |
 | `uv` | Gestão de deps + venv reprodutível | tooling | última |
-| `typer` | CLI (`run/analyze/report/annotate/serve`) | cli | pin |
+| `typer` | CLI (`run/annotate/analyze/report/status/show-config/validate-judge`) | cli | pin |
 | `pydantic` v2 + `pydantic-settings` | DTOs de fronteira, config, segredos | infra/config | pin |
 | `structlog` | Logging estruturado JSON/texto | infra | pin |
 | `openai` (SDK) | Cliente OpenAI-compatible p/ vLLM (gen+juiz) | adapters | pin |
@@ -643,7 +643,7 @@ Versões devem ser **fixadas** em `pyproject.toml` + lock (`uv.lock`). Os númer
 
 - O **juiz** ocupa uma GPU dedicada (GPU 3), residente, `TP=1`, determinístico (ADR-003/012). Carregado uma única vez por rodada.
 - Os **5 geradores** giram nas GPUs 0–2 em 2 ondas (3 + 2); cada servidor é fixado a uma GPU por `CUDA_VISIBLE_DEVICES` e usa a mesma porta `:8000` (apenas um gerador por GPU; o `base_url` aponta para a instância ativa da onda). Geradores grandes que excedam 1 GPU usam `TP=2` (ADR-012, P1.1).
-- `vllm-generator` (GPUs 0–2) e `vllm-judge` (GPU 3) **coexistem** — daí o pipelining opcional geração↔julgamento (ADR-004). O `serve`/`run` da CLI orquestra esse ciclo de vida.
+- `vllm-generator` (GPUs 0–2) e `vllm-judge` (GPU 3) **coexistem** — daí o pipelining opcional geração↔julgamento (ADR-004). O `run` da CLI orquestra esse ciclo de vida.
 
 #### 7.2.1. Modo external (servidores via túnel SSH)
 
