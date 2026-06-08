@@ -15,6 +15,8 @@ from __future__ import annotations
 import httpx
 import structlog
 
+from inteligenciomica_eval.infrastructure.masking import mask_url
+
 _log = structlog.get_logger(__name__)
 
 _TIMEOUT_S: float = 10.0
@@ -43,12 +45,16 @@ async def probe_served_model(url: str) -> str:
             models = data.get("data", [])
             if models:
                 model_id: str = str(models[0].get("id", ""))
-                _log.info("probe_served_model_ok", url=models_url, model_id=model_id)
+                _log.info(
+                    "probe_served_model_ok", url=mask_url(models_url), model_id=model_id
+                )
                 return model_id
-            _log.warning("probe_served_model_empty", url=models_url)
+            _log.warning("probe_served_model_empty", url=mask_url(models_url))
             return ""
     except Exception as exc:
-        _log.warning("probe_served_model_failed", url=models_url, error=str(exc))
+        _log.warning(
+            "probe_served_model_failed", url=mask_url(models_url), error=str(exc)
+        )
         return ""
 
 
@@ -111,10 +117,12 @@ async def probe_vllm_version(url: str) -> str | None:
             except Exception:
                 pass
 
-        _log.warning("probe_vllm_version_unavailable", url=version_url)
+        _log.warning("probe_vllm_version_unavailable", url=mask_url(version_url))
         return None
     except Exception as exc:
-        _log.warning("probe_vllm_version_failed", url=version_url, error=str(exc))
+        _log.warning(
+            "probe_vllm_version_failed", url=mask_url(version_url), error=str(exc)
+        )
         return None
 
 
@@ -155,12 +163,14 @@ async def probe_judge_determinism(url: str) -> bool:
         deterministic = text1 == text2
         _log.info(
             "probe_judge_determinism_ok",
-            url=completions_url,
+            url=mask_url(completions_url),
             deterministic=deterministic,
         )
         return deterministic
     except Exception as exc:
         _log.warning(
-            "probe_judge_determinism_failed", url=completions_url, error=str(exc)
+            "probe_judge_determinism_failed",
+            url=mask_url(completions_url),
+            error=str(exc),
         )
         return False

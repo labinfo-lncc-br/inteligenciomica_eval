@@ -153,11 +153,13 @@ class PrometheusJudgeAdapter:
 
         except _ParseFailureError as exc:
             latency_ms = int((time.monotonic() - t0) * 1000)
+            _exc_str = str(exc)
             _log.error(
                 "prometheus_judge_nan",
                 question_id=sample.question_id,
                 nan_reason="parse_failure_exhausted",
-                raw_content=str(exc)[:500],
+                raw_len=len(_exc_str),
+                raw_snippet=_exc_str[:120],
                 model=self._model,
                 latency_ms=latency_ms,
                 batch_invariant=True,
@@ -202,7 +204,8 @@ class PrometheusJudgeAdapter:
         except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
             _log.warning(
                 "prometheus_judge_parse_failure",
-                raw_content=content[:500],
+                raw_len=len(content),
+                raw_snippet=content[:120],
                 error=str(exc),
             )
             raise _ParseFailureError(content) from exc

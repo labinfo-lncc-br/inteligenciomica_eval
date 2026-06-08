@@ -13,9 +13,9 @@ from inteligenciomica_eval.domain.errors import EndpointUnreachableError
 from inteligenciomica_eval.domain.ports import ModelSpec, ServerHandle
 from inteligenciomica_eval.infrastructure.adapters.external_vllm_server_manager import (
     ExternalVLLMServerManager,
-    _mask_url,
     _parse_port,
 )
+from inteligenciomica_eval.infrastructure.masking import mask_url as _mask_url
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -75,7 +75,7 @@ def test_mask_url_basic() -> None:
     masked = _mask_url("http://localhost:8000/v1")
     assert "localhost" in masked
     assert "8000" in masked
-    assert "/***" in masked
+    assert "/v1" not in masked
 
 
 def test_mask_url_with_credentials() -> None:

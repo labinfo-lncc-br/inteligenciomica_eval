@@ -23,33 +23,12 @@ import structlog
 
 from inteligenciomica_eval.domain.errors import EndpointUnreachableError
 from inteligenciomica_eval.domain.ports import ModelSpec, ServerHandle
+from inteligenciomica_eval.infrastructure.masking import mask_url
 
 _log = structlog.get_logger(__name__)
 
 _DEFAULT_POLL_INTERVAL_S: float = 2.0
 _DEFAULT_HEALTH_TIMEOUT_S: float = 5.0
-
-
-def _mask_url(url: str) -> str:
-    """Mascara credenciais em URLs para logs (ADR-008).
-
-    Remove ``user:password@`` se presentes; exibe apenas ``scheme://host:port/***``.
-
-    Args:
-        url: URL possivelmente contendo credenciais.
-
-    Returns:
-        URL anonimizada para exibição segura em logs.
-    """
-    try:
-        p = urlparse(url)
-        masked = f"{p.scheme}://{p.hostname}"
-        if p.port:
-            masked += f":{p.port}"
-        masked += "/***"
-        return masked
-    except Exception:
-        return "***"
 
 
 def _parse_port(url: str) -> int:
@@ -132,7 +111,7 @@ class ExternalVLLMServerManager:
         _log.info(
             "external_server_start",
             model=model.model,
-            url=_mask_url(url),
+            url=mask_url(url),
             batch_invariant=model.batch_invariant,
         )
         return handle
@@ -165,7 +144,7 @@ class ExternalVLLMServerManager:
                         _log.info(
                             "external_server_healthy",
                             model=handle.model,
-                            url=_mask_url(health_url),
+                            url=mask_url(health_url),
                             status=resp.status_code,
                         )
                         return
@@ -176,7 +155,7 @@ class ExternalVLLMServerManager:
 
         raise EndpointUnreachableError(
             handle.model,
-            f"did not respond to GET {_mask_url(health_url)} within {timeout_s}s; "
+            f"did not respond to GET {mask_url(health_url)} within {timeout_s}s; "
             f"last error: {last_error}",
         )
 
@@ -191,5 +170,5 @@ class ExternalVLLMServerManager:
         _log.info(
             "external_server_stop_noop",
             model=handle.model,
-            url=_mask_url(handle.url),
+            url=mask_url(handle.url),
         )

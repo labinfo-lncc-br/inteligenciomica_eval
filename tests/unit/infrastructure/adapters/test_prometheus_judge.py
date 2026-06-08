@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import openai
 import pytest
+import structlog.testing
 from tenacity import stop_after_attempt, wait_none
 
 from inteligenciomica_eval.domain.errors import JudgeUnavailableError
@@ -366,9 +367,67 @@ class TestBatchInvariant:
         ev = nan_events[0]
         assert ev["question_id"] == _SAMPLE.question_id
         assert ev["nan_reason"] == "parse_failure_exhausted"
-        assert isinstance(ev["raw_content"], str)
+        assert isinstance(ev["raw_len"], int)
+        assert isinstance(ev["raw_snippet"], str)
+        assert "raw_content" not in ev, (
+            "payload completo não deve ser logado (TAREFA-314)"
+        )
         assert isinstance(ev["latency_ms"], int)
         assert ev["batch_invariant"] is True
+
+
+# ---------------------------------------------------------------------------
+# Testes de segurança de payload (TAREFA-314 — S3)
+# ---------------------------------------------------------------------------
+
+
+class TestPayloadSecurity:
+    """Garante que eventos de falha não expõem o payload completo do juiz."""
+
+    async def test_parse_failure_log_no_raw_content_field(self) -> None:
+        """Evento prometheus_judge_parse_failure NÃO deve ter campo raw_content ([:500]).
+
+        Este teste falharia antes da TAREFA-314: o evento logava raw_content=content[:500].
+        Agora deve usar raw_len + raw_snippet ≤ 120 chars.
+        """
+        # Payload longo para garantir que o truncamento em 120 é verificado
+        long_payload = "x" * 600
+        mock = AsyncMock(return_value=_mock_completion(long_payload))
+        adapter = _make_adapter(create_mock=mock)
+
+        with structlog.testing.capture_logs() as logs:
+            await adapter.score(_SAMPLE)
+
+        parse_events = [
+            e for e in logs if e.get("event") == "prometheus_judge_parse_failure"
+        ]
+        assert parse_events, "Deve haver evento de parse_failure"
+        for ev in parse_events:
+            assert "raw_content" not in ev, (
+                "raw_content não deve ser logado (TAREFA-314)"
+            )
+            assert "raw_len" in ev, "raw_len deve estar presente"
+            assert "raw_snippet" in ev, "raw_snippet deve estar presente"
+            assert len(ev["raw_snippet"]) <= 120, "snippet deve ter no máximo 120 chars"
+
+    async def test_nan_log_no_raw_content_field(self) -> None:
+        """Evento prometheus_judge_nan NÃO deve ter campo raw_content.
+
+        Verifica que o campo substituído raw_len/raw_snippet está presente.
+        """
+        mock = AsyncMock(return_value=_mock_completion("payload ruim que não é json"))
+        adapter = _make_adapter(create_mock=mock)
+
+        with structlog.testing.capture_logs() as logs:
+            await adapter.score(_SAMPLE)
+
+        nan_events = [e for e in logs if e.get("event") == "prometheus_judge_nan"]
+        assert nan_events
+        ev = nan_events[0]
+        assert "raw_content" not in ev, "raw_content não deve ser logado (TAREFA-314)"
+        assert "raw_len" in ev
+        assert "raw_snippet" in ev
+        assert len(ev["raw_snippet"]) <= 120
 
 
 # ---------------------------------------------------------------------------

@@ -65,6 +65,7 @@ from inteligenciomica_eval.domain.value_objects import ModelWaveSpec
 from inteligenciomica_eval.infrastructure.benchmark.loader import load_questions
 from inteligenciomica_eval.infrastructure.config.schema import RoundConfig
 from inteligenciomica_eval.infrastructure.config.settings import RuntimeSettings
+from inteligenciomica_eval.infrastructure.masking import mask_path, mask_url
 
 if TYPE_CHECKING:
     pass
@@ -289,19 +290,6 @@ def _build_external_server_manager(
     return manager_cls(endpoint_map=endpoint_map)
 
 
-def _mask_url(url: str) -> str:
-    """Mascara o path de uma URL mantendo host:porta para auditoria de topologia."""
-    from urllib.parse import urlparse
-
-    p = urlparse(url)
-    return f"{p.scheme}://{p.netloc}/***"
-
-
-def _mask_path(p: Path) -> str:
-    """Exibe apenas o nome do arquivo para log de auditoria (evita vazar layout de disco)."""
-    return f"<...>/{p.name}"
-
-
 def _run_endpoint_probes(
     *,
     generator_urls: dict[str, str],
@@ -374,7 +362,7 @@ def _run_endpoint_probes(
                 "logical_name": judge_model,
                 "served_model_id": judge_served,
                 "vllm_version": judge_ver or "unknown",
-                "endpoint_masked": _mask_url(judge_url) if judge_url else "N/A",
+                "endpoint_masked": mask_url(judge_url) if judge_url else "N/A",
                 "healthy": judge_healthy,
                 "determinism_verified": judge_det,
             },
@@ -382,7 +370,7 @@ def _run_endpoint_probes(
                 name: {
                     "served_model_id": gen_served.get(name, ""),
                     "vllm_version": gen_vllm_ver.get(name, "unknown"),
-                    "endpoint_masked": _mask_url(url),
+                    "endpoint_masked": mask_url(url),
                     "healthy": bool(gen_served.get(name)),
                 }
                 for name, url in generator_urls.items()
@@ -646,7 +634,7 @@ def build_container(
     _log.info(
         "wiring_questions_source",
         source=_questions_source,
-        path=_mask_path(questions_path) if questions_path is not None else "<packaged>",
+        path=mask_path(questions_path) if questions_path is not None else "<packaged>",
     )
     _loaded_questions = load_questions(questions_path)
 

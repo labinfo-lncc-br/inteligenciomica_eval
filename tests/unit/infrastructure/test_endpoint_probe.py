@@ -1,4 +1,7 @@
-"""Testes unitários das sondas de proveniência (TAREFA-311, ADR-014)."""
+"""Testes unitários das sondas de proveniência (TAREFA-311, ADR-014).
+
+Inclui testes de mascaramento de URL nos eventos de log (TAREFA-314 — B1).
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import structlog.testing
 
 from inteligenciomica_eval.infrastructure.provenance.endpoint_probe import (
     probe_judge_determinism,
@@ -296,3 +300,123 @@ async def test_probe_judge_determinism_adds_v1_when_missing() -> None:
 
     assert called_urls
     assert "/v1/chat/completions" in called_urls[0]
+
+
+# ---------------------------------------------------------------------------
+# Testes de mascaramento de URL nos logs (TAREFA-314 — B1)
+# ---------------------------------------------------------------------------
+
+# URL com credenciais e path — o que NÃO deve aparecer nos logs
+_CRED_URL = "http://user:secret@probehost:9876/v1"
+# Verificações: host+path (indicam URL crua) e credencial
+_RAW_HOST_MODELS = "probehost:9876/v1/models"
+_RAW_HOST_VERSION = "probehost:9876/version"
+_RAW_HOST_COMPLETIONS = "probehost:9876/v1/chat/completions"
+_CREDENTIAL_FRAGMENT = "secret"
+
+
+def _all_log_values(logs: list[dict[str, Any]]) -> list[str]:
+    """Coleta todos os valores de log como strings para inspeção."""
+    values: list[str] = []
+    for ev in logs:
+        for v in ev.values():
+            values.append(str(v))
+    return values
+
+
+class TestProbesMaskingUrls:
+    """Garante que nenhum probe loga URL crua (com path ou credenciais) — TAREFA-314."""
+
+    async def test_probe_served_model_no_raw_url_in_logs(self) -> None:
+        """probe_served_model não deve logar path (/v1/models) nem credenciais."""
+        resp = _mock_response(200, {"data": [{"id": "modelo"}]})
+
+        with patch(
+            "inteligenciomica_eval.infrastructure.provenance.endpoint_probe.httpx.AsyncClient"
+        ) as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with structlog.testing.capture_logs() as logs:
+                await probe_served_model(_CRED_URL)
+
+        values = _all_log_values(logs)
+        assert logs, "Deve haver ao menos um evento de log"
+        for v in values:
+            assert _CREDENTIAL_FRAGMENT not in v, f"Credencial vazou no log: {v!r}"
+            assert _RAW_HOST_MODELS not in v, f"URL raw (host+path) vazou no log: {v!r}"
+
+    async def test_probe_served_model_error_no_raw_url_in_logs(self) -> None:
+        """probe_served_model em falha não deve logar URL crua."""
+        with patch(
+            "inteligenciomica_eval.infrastructure.provenance.endpoint_probe.httpx.AsyncClient"
+        ) as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with structlog.testing.capture_logs() as logs:
+                await probe_served_model(_CRED_URL)
+
+        values = _all_log_values(logs)
+        assert logs, "Deve haver evento de falha no log"
+        for v in values:
+            assert _CREDENTIAL_FRAGMENT not in v, (
+                f"Credencial vazou no log de erro: {v!r}"
+            )
+            assert _RAW_HOST_MODELS not in v, (
+                f"URL raw (host+path) vazou no log de erro: {v!r}"
+            )
+
+    async def test_probe_vllm_version_no_raw_url_in_logs(self) -> None:
+        """probe_vllm_version não deve logar path (/version) nem credenciais."""
+        resp = _mock_response(200, {"version": "0.4.3"})
+
+        with patch(
+            "inteligenciomica_eval.infrastructure.provenance.endpoint_probe.httpx.AsyncClient"
+        ) as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with structlog.testing.capture_logs() as logs:
+                await probe_vllm_version(_CRED_URL)
+
+        values = _all_log_values(logs)
+        assert logs, "Deve haver ao menos um evento de log"
+        for v in values:
+            assert _CREDENTIAL_FRAGMENT not in v, f"Credencial vazou no log: {v!r}"
+            # _RAW_HOST_VERSION = "probehost:9876/version" (host+path), não só "/version"
+            # porque o probe usa source="/version" como identificador (sem host) — legítimo.
+            assert _RAW_HOST_VERSION not in v, (
+                f"URL raw (host+path) vazou no log: {v!r}"
+            )
+
+    async def test_probe_judge_determinism_no_raw_url_in_logs(self) -> None:
+        """probe_judge_determinism não deve logar path (/v1/chat/completions) nem credenciais."""
+        identical = {"choices": [{"message": {"content": "DETERMINISMO"}}]}
+        resp1 = _mock_response(200, identical)
+        resp2 = _mock_response(200, identical)
+
+        with patch(
+            "inteligenciomica_eval.infrastructure.provenance.endpoint_probe.httpx.AsyncClient"
+        ) as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(side_effect=[resp1, resp2])
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with structlog.testing.capture_logs() as logs:
+                await probe_judge_determinism(_CRED_URL)
+
+        values = _all_log_values(logs)
+        assert logs, "Deve haver ao menos um evento de log"
+        for v in values:
+            assert _CREDENTIAL_FRAGMENT not in v, f"Credencial vazou no log: {v!r}"
+            assert _RAW_HOST_COMPLETIONS not in v, (
+                f"URL raw (host+path) vazou no log: {v!r}"
+            )
