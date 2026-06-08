@@ -60,7 +60,7 @@ probe de juiz retornar `False`.
 Três campos adicionados com defaults retrocompat:
 - `server_mode: str = "managed"` — modo de implantação.
 - `served_model_id: str = ""` — ID do modelo confirmado por probe.
-- `determinism_verified: bool = True` — resultado do probe de determinismo.
+- `determinism_verified: bool = False` — resultado do probe de determinismo. Default `False`: sem prova, sem `True` (regra ADR-014 — revertido do draft inicial pelo fix TAREFA-312).
 
 Mapeados em `EVAL_SCHEMA` (3 novas colunas `pa.string`, `pa.string`, `pa.bool_`).
 

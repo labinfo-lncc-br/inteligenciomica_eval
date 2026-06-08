@@ -25,12 +25,27 @@ Usage::
 
 from __future__ import annotations
 
+import json as _json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 _DEFAULT_MANUAL = Path("docs/operations_manual.md")
+
+# Repositório raiz — dois níveis acima de scripts/validate_manual.py
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Arquivo de perguntas empacotado (relativo ao repo root)
+_BUNDLED_QUESTIONS = Path(
+    "src/inteligenciomica_eval/infrastructure/benchmark/questions_rf1.jsonl"
+)
+
+# Detecta tokens config/ (exceto config/data/) em linhas de shell não-comentário
+_LOCAL_FILE_RE = re.compile(r"(?<![<${\w/])config/(?!data/)[\w.\-/]+")
+
+# Claim numérica sobre o conjunto empacotado: "N perguntas placeholder"
+_CLAIM_RE = re.compile(r"\b(\d+)\s+perguntas?\s+placeholder", re.IGNORECASE)
 
 # Heading que indica seção pendente — blocos de código dentro dela são ignorados.
 _PENDING_RE = re.compile(r"(?i)\[PENDENTE[:\s]")
@@ -134,6 +149,73 @@ def _curl_errors_in_block(block: str) -> list[str]:
                 errors.append(
                     f"URL curl inválida (porta não-numérica ou espaço literal): {token!r}"
                 )
+    return errors
+
+
+def _local_file_errors_in_block(block: str, repo_root: Path) -> list[str]:
+    """Verifica que paths config/ referenciados no bloco existem no repo.
+
+    Ignora linhas de comentário (``#``) e tokens com ``<>``, ``$``, ``{``
+    (placeholders ou expansões de variável).
+    """
+    errors: list[str] = []
+    seen: set[str] = set()
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        for m in _LOCAL_FILE_RE.finditer(stripped):
+            path_str = m.group(0).rstrip(".,;):'\"")
+            if any(c in path_str for c in "<>${}"):
+                continue
+            if path_str in seen:
+                continue
+            seen.add(path_str)
+            if not (repo_root / path_str).exists():
+                errors.append(
+                    f"Arquivo referenciado não encontrado no repo: {path_str!r}"
+                )
+    return errors
+
+
+def _count_bundled_questions(repo_root: Path) -> int:
+    """Conta perguntas com ``question_id`` em questions_rf1.jsonl.
+
+    Retorna -1 se o arquivo não for encontrado.
+    """
+    qfile = repo_root / _BUNDLED_QUESTIONS
+    if not qfile.exists():
+        return -1
+    count = 0
+    for line in qfile.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = _json.loads(line)
+            if "question_id" in obj:
+                count += 1
+        except _json.JSONDecodeError:
+            pass
+    return count
+
+
+def _check_numeric_claims(text: str, repo_root: Path) -> list[str]:
+    """Verifica que claims 'N perguntas placeholder' coincidem com questions_rf1.jsonl."""
+    actual = _count_bundled_questions(repo_root)
+    if actual < 0:
+        return []  # arquivo não localizado — pula verificação
+    errors: list[str] = []
+    seen_claims: set[int] = set()
+    for m in _CLAIM_RE.finditer(text):
+        claimed = int(m.group(1))
+        if claimed == actual or claimed in seen_claims:
+            continue
+        seen_claims.add(claimed)
+        errors.append(
+            f"Claim numérica: manual diz '{claimed} pergunta(s) placeholder', "
+            f"questions_rf1.jsonl tem {actual} perguntas com question_id."
+        )
     return errors
 
 
@@ -243,8 +325,40 @@ def main(manual_path: Path = _DEFAULT_MANUAL) -> int:
             sys.stdout.write(f"  {flag:<40} {status}\n")
         sys.stdout.write("\n")
 
+    # --- 4. Verificação de arquivos locais versionados referenciados ---
+    raw_file_errors: list[str] = []
+    for block in blocks:
+        raw_file_errors.extend(_local_file_errors_in_block(block, _REPO_ROOT))
+    # deduplica preservando ordem
+    seen_fe: set[str] = set()
+    unique_file_errors: list[str] = []
+    for err in raw_file_errors:
+        if err not in seen_fe:
+            seen_fe.add(err)
+            unique_file_errors.append(err)
+
+    if unique_file_errors:
+        sys.stdout.write("Arquivos referenciados inexistentes no repo:\n")
+        for err in unique_file_errors:
+            sys.stdout.write(f"  {err}\n")
+        sys.stdout.write("\n")
+
+    # --- 5. Verificação de claims numéricas sobre o conjunto empacotado ---
+    claim_errors = _check_numeric_claims(text, _REPO_ROOT)
+    if claim_errors:
+        sys.stdout.write("Claims numéricas inconsistentes:\n")
+        for err in claim_errors:
+            sys.stdout.write(f"  {err}\n")
+        sys.stdout.write("\n")
+
     # --- Resultado final ---
-    if failed_subcmds or curl_errors or missing_flags:
+    if (
+        failed_subcmds
+        or curl_errors
+        or missing_flags
+        or unique_file_errors
+        or claim_errors
+    ):
         if failed_subcmds:
             sys.stderr.write(
                 f"FAIL — subcomandos inexistentes: {', '.join(failed_subcmds)}\n"
@@ -257,6 +371,15 @@ def main(manual_path: Path = _DEFAULT_MANUAL) -> int:
             sys.stderr.write(
                 f"FAIL — flags ausentes em 'ielm-eval run --help': "
                 f"{', '.join(missing_flags)}\n"
+            )
+        if unique_file_errors:
+            sys.stderr.write(
+                f"FAIL — {len(unique_file_errors)} arquivo(s) referenciado(s) não"
+                f" encontrado(s) no repo\n"
+            )
+        if claim_errors:
+            sys.stderr.write(
+                f"FAIL — {len(claim_errors)} claim(s) numérica(s) inconsistente(s)\n"
             )
         return 1
 

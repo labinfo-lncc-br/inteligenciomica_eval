@@ -427,7 +427,7 @@ com `config_hash`, topologia, endpoint mascarado (`scheme://host:port/***`),
     "config_hash": "a3f2b1c9...",
     "topology": "external",
     "generators": [
-      {"name": "gpt-oss-120b", "endpoint_masked": "http://localhost:8010/***",
+      {"name": "gpt-oss-120b", "endpoint_masked": "http://localhost:8010",
        "healthy": true, "vllm_version": "0.4.2", "served_model_id": "gpt-oss-120b"}
     ],
     "judge_det": true
@@ -471,21 +471,33 @@ Parquet e é usado para retomar execuções interrompidas). Opções relevantes:
 
 ### De onde vêm as perguntas
 
-As perguntas do benchmark são carregadas a partir da variável de ambiente
-`BENCHMARK_QUESTIONS_PATH` (RF4/P4). Se a variável estiver vazia (default), o `ielm-eval`
-usa o arquivo **empacotado** no pacote Python (`questions_rf1.jsonl`, 13 perguntas RF1
-— preencher antes da Rodada 1 de produção):
+As perguntas do benchmark seguem esta precedência de carregamento (TAREFA-313):
+
+1. **`BENCHMARK_QUESTIONS_PATH`** (variável de ambiente — prioridade máxima): quando
+   definida, sobrescreve o campo `questions:` do YAML.
+2. **`questions:`** no YAML de rodada (caminho canônico): path relativo ao diretório
+   do YAML (ex.: `questions: "perguntas_producao.jsonl"`).
+3. **`questions_rf1.jsonl` empacotado** (fallback automático): **3 perguntas
+   placeholder** representativas. As 13 perguntas reais da RF1 devem ser curadas pelo
+   especialista biomédico antes da Rodada 1 de produção (P4).
 
 ```bash
-# Para usar um arquivo externo de perguntas:
-export BENCHMARK_QUESTIONS_PATH="config/questions.jsonl"
+# Opção A — configurar no YAML de rodada (canônico):
+# Editar config/experiment_round1.yaml e adicionar:
+#   questions: "perguntas_producao.jsonl"
+# (arquivo a ser criado pelo operador no mesmo diretório do YAML — não versionado)
 
-# Para usar o arquivo empacotado (default):
-unset BENCHMARK_QUESTIONS_PATH   # ou deixar vazio
+# Opção B — sobrescrever via variável de ambiente:
+export BENCHMARK_QUESTIONS_PATH="/caminho/absoluto/para/perguntas.jsonl"
+ielm-eval run --config config/experiment_round1.yaml --run-id <run_id>
+
+# Opção C — usar o fallback empacotado (apenas 3 placeholders):
+unset BENCHMARK_QUESTIONS_PATH   # e sem campo questions: no YAML
+ielm-eval run --config config/experiment_round1.yaml --run-id <run_id>
 ```
 
 O arquivo deve estar no formato **JSONL** (uma pergunta por linha; linhas em branco e
-linhas de comentário são ignoradas):
+linhas com `_comment` são ignoradas):
 
 ```json
 {"question_id": "resistencia-beta-lactamicos",
@@ -493,22 +505,21 @@ linhas de comentário são ignoradas):
  "ground_truth": "Os principais mecanismos incluem: (1) produção de beta-lactamases..."}
 ```
 
-**Multi-área de conhecimento:** cada área usa seu próprio arquivo JSONL apontado por
-`BENCHMARK_QUESTIONS_PATH` no momento da execução:
+**Multi-área de conhecimento:** crie um arquivo JSONL por área antes da rodada
+(responsabilidade do especialista biomédico — arquivos a serem criados pelo operador,
+não versionados no repositório):
 
 ```bash
 # Área: resistência bacteriana
-export BENCHMARK_QUESTIONS_PATH="config/questions_resistencia.jsonl"
+# (operador cria o arquivo de perguntas antes de executar)
+export BENCHMARK_QUESTIONS_PATH="/caminho/para/perguntas_resistencia.jsonl"
 ielm-eval run --config config/experiment_round1.yaml --run-id run-resistencia-001
 
 # Área: sepse
-export BENCHMARK_QUESTIONS_PATH="config/questions_sepse.jsonl"
+# (operador cria o arquivo de perguntas antes de executar)
+export BENCHMARK_QUESTIONS_PATH="/caminho/para/perguntas_sepse.jsonl"
 ielm-eval run --config config/experiment_round1.yaml --run-id run-sepse-001
 ```
-
-> **Nota:** o campo `questions:` existe no schema do YAML de rodada mas **não está
-> conectado ao loader** na versão atual — o runtime lê exclusivamente de
-> `BENCHMARK_QUESTIONS_PATH`. Use sempre a env var para trocar o conjunto de perguntas.
 
 > **Rodada 2 (M5):** `question_id` deve casar exatamente com as entradas de
 > `config/gold_chunks.jsonl` (chunks-ouro curados) para que o funil de retrieval
