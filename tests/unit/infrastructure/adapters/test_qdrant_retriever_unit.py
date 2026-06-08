@@ -210,6 +210,62 @@ def test_default_top_k_is_public_and_matches_constructor(
 
 
 # ---------------------------------------------------------------------------
+# Chunk.source — PMID from payload (TAREFA-316)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_search_populates_chunk_source_from_payload(
+    adapter: QdrantRetrieverAdapter,
+    mock_qdrant_client: MagicMock,
+) -> None:
+    """Chunk.source must be filled from payload['source'] (PMID)."""
+    sp = MagicMock()
+    sp.id = "c1"
+    sp.score = 0.9
+    sp.payload = {"text": "Some biomedical text.", "source": "38291047"}
+    mock_qdrant_client.query_points.return_value = _make_query_response([sp])
+
+    result = await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=1)
+
+    assert result.chunks[0].source == "38291047"
+
+
+@pytest.mark.unit
+async def test_search_chunk_source_empty_when_payload_missing_source(
+    adapter: QdrantRetrieverAdapter,
+    mock_qdrant_client: MagicMock,
+) -> None:
+    """When payload has no 'source' key, Chunk.source must default to ''."""
+    sp = MagicMock()
+    sp.id = "c1"
+    sp.score = 0.9
+    sp.payload = {"text": "Text without source."}
+    mock_qdrant_client.query_points.return_value = _make_query_response([sp])
+
+    result = await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=1)
+
+    assert result.chunks[0].source == ""
+
+
+@pytest.mark.unit
+async def test_search_chunk_source_empty_when_no_payload(
+    adapter: QdrantRetrieverAdapter,
+    mock_qdrant_client: MagicMock,
+) -> None:
+    """When payload is None, Chunk.source must default to ''."""
+    sp = MagicMock()
+    sp.id = "c1"
+    sp.score = 0.9
+    sp.payload = None
+    mock_qdrant_client.query_points.return_value = _make_query_response([sp])
+
+    result = await adapter.search(base=BaseId("IDx_400k"), question="test", top_k=1)
+
+    assert result.chunks[0].source == ""
+
+
+# ---------------------------------------------------------------------------
 # isinstance check — RetrieverPort structural conformance
 # ---------------------------------------------------------------------------
 

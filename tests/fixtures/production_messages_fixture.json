@@ -1,0 +1,23 @@
+{
+    "comment": "Fixture de referência derivado do formato de produção (orchestrator_service.py/_build_prompt_with_context + system_prompt.txt). Usado no teste de fidelidade (TAREFA-316).",
+    "question": "What is BRCA1 and its role in breast cancer?",
+    "chunks": [
+        {
+            "id": "c1",
+            "source": "38291047",
+            "text": "BRCA1 mutations confer a lifetime breast cancer risk of 55 to 72 percent in carriers.",
+            "score": 0.95
+        },
+        {
+            "id": "c2",
+            "source": "87654321",
+            "text": "BRCA1 is a tumor suppressor gene located on chromosome 17q21.",
+            "score": 0.88
+        }
+    ],
+    "expected_context": "[PMID:38291047] BRCA1 mutations confer a lifetime breast cancer risk of 55 to 72 percent in carriers.\n\n[PMID:87654321] BRCA1 is a tumor suppressor gene located on chromosome 17q21.",
+    "expected_user": "Context information is below.\n---------------------\n[PMID:38291047] BRCA1 mutations confer a lifetime breast cancer risk of 55 to 72 percent in carriers.\n\n[PMID:87654321] BRCA1 is a tumor suppressor gene located on chromosome 17q21.\n---------------------\nGiven the context information and not prior knowledge, answer the query.\nQuery: What is BRCA1 and its role in breast cancer?",
+    "message_count": 2,
+    "system_role": "system",
+    "user_role": "user"
+}

@@ -1,8 +1,10 @@
 """PromptRegistry — carregador e renderizador de templates Jinja2.
 
-Os templates ficam em ``infrastructure/prompts/*.j2`` e são versionados como código.
-O campo ``prompt_version`` rastreia exatamente qual versão do template foi usada em
-cada linha do Parquet (§11.2 do documento de arquitetura).
+Os templates ficam em ``infrastructure/prompts/`` e são versionados como código.
+O campo ``prompt_version`` rastreia exatamente qual versão do bundle de geração foi
+usada em cada linha do Parquet (§5.3).  A partir de TAREFA-316, ``prompt_version``
+grava ``generation_prompt_version`` (bundle RAG), não o ``git describe`` do registry
+(ADR-015).
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from collections.abc import Sequence
 
 import jinja2
 import structlog
+
+from inteligenciomica_eval.domain.ports import Chunk
 
 _log = structlog.get_logger(__name__)
 
@@ -80,6 +84,75 @@ class PromptRegistry:
 
     # ------------------------------------------------------------------
     # Renderização
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Bundles RAG versionados (ADR-015)
+    # ------------------------------------------------------------------
+
+    def list_rag_versions(self) -> list[str]:
+        """Lista as versões de bundle RAG disponíveis no pacote.
+
+        Cada versão corresponde a um subdiretório em ``infrastructure/prompts/rag/``
+        contendo ``system.txt`` e ``user.j2``.
+
+        Returns:
+            Lista ordenada de nomes de versão disponíveis (ex.: ``["v1_production"]``).
+        """
+        versions: set[str] = set()
+        for tpl in self._env.list_templates():
+            parts = tpl.replace("\\", "/").split("/")
+            if len(parts) >= 2 and parts[0] == "rag" and not parts[1].startswith("_"):
+                versions.add(parts[1])
+        return sorted(versions)
+
+    def render_rag_generation(
+        self,
+        *,
+        version: str,
+        question: str,
+        contexts: Sequence[Chunk],
+    ) -> tuple[str, str]:
+        """Renderiza o bundle de prompt de geração RAG versionado.
+
+        Carrega ``system.txt`` (texto puro) e ``user.j2`` (Jinja2) do bundle
+        ``rag/<version>/`` e constrói as mensagens ``system`` e ``user`` prontas
+        para envio ao LLM gerador.
+
+        O contexto é formatado como ``"[PMID:{source}] {text}"`` unido por ``"\\n\\n"``.
+        Se ``source`` estiver vazio, usa ``"N/A"`` (replica produção, ADR-015 §D4).
+
+        Args:
+            version: identificador da versão do bundle (ex.: ``"v1_production"``).
+            question: texto da pergunta a ser enviada ao LLM.
+            contexts: chunks recuperados pelo retriever; ``source`` é o PMID.
+
+        Returns:
+            Tupla ``(system_content, user_content)`` pronta para
+            ``messages=[{"role":"system","content":system}, {"role":"user","content":user}]``.
+
+        Raises:
+            ValueError: se ``version`` não existir, com lista de versões disponíveis.
+        """
+        available = self.list_rag_versions()
+        if version not in available:
+            raise ValueError(
+                f"RAG prompt bundle {version!r} não encontrado. "
+                f"Versões disponíveis: {available}"
+            )
+        assert self._env.loader is not None  # PackageLoader sempre presente
+        system_source, _, _ = self._env.loader.get_source(
+            self._env, f"rag/{version}/system.txt"
+        )
+        context_str = "\n\n".join(
+            f"[PMID:{c.source or 'N/A'}] {c.text}" for c in contexts
+        )
+        user_template = self._env.get_template(f"rag/{version}/user.j2")
+        user_content = user_template.render(context=context_str, question=question)
+        return system_source, user_content
+
+    # ------------------------------------------------------------------
+    # Rubrica biomédica (Camada 2 — juiz)
     # ------------------------------------------------------------------
 
     def render_biomed_rubric(

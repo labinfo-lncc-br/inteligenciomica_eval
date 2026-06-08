@@ -347,6 +347,32 @@ class TestPhasesValidation:
 
 
 # ---------------------------------------------------------------------------
+# generation_prompt_version — validação no carregamento (TAREFA-316)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGenerationPromptVersion:
+    def test_default_v1_production_passes_validation(self, tmp_path: Path) -> None:
+        """Default bundle v1_production deve existir e passar a validação."""
+        cfg = load_round_config(_write_yaml(tmp_path, _BASE_DICT))
+        assert cfg.generation_prompt_version == "v1_production"
+
+    def test_nonexistent_version_raises_config_validation_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Versão inexistente deve levantar ConfigValidationError com lista disponível."""
+        data = _cfg(generation_prompt_version="v99_does_not_exist")
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_round_config(_write_yaml(tmp_path, data))
+        err = exc_info.value
+        assert err.field == "generation_prompt_version"
+        # mensagem deve citar a versão inválida e as disponíveis
+        assert "v99_does_not_exist" in str(err)
+        assert "v1_production" in str(err)
+
+
+# ---------------------------------------------------------------------------
 # YAML loading
 # ---------------------------------------------------------------------------
 

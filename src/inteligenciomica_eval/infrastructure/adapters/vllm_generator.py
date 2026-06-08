@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -22,11 +23,22 @@ _log = structlog.get_logger(__name__)
 
 _RETRYABLE = (openai.APIConnectionError, openai.RateLimitError)
 
+# Strip <think>…</think> blocks emitted by reasoning-capable models (DOTALL so
+# multi-line think blocks are removed in one pass — matches production behaviour).
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
-def _default_prompt_fn(question: str, contexts: Sequence[Chunk]) -> str:
-    """Build a minimal generation prompt from question and context chunks."""
-    context_block = "\n".join(f"- {c.text}" for c in contexts)
-    return f"Contexts:\n{context_block}\n\nQuestion: {question}\n\nAnswer:"
+
+def _default_render_fn(question: str, contexts: Sequence[Chunk]) -> tuple[str, str]:
+    """Default render using PromptRegistry with the v1_production bundle (ADR-015)."""
+    from inteligenciomica_eval.infrastructure.prompts.registry import (
+        get_default_registry,
+    )
+
+    return get_default_registry().render_rag_generation(
+        version="v1_production",
+        question=question,
+        contexts=contexts,
+    )
 
 
 class VLLMGeneratorAdapter:
@@ -36,6 +48,14 @@ class VLLMGeneratorAdapter:
     key auth).  The ``seed`` is forwarded via ``extra_body`` so that vLLM passes
     it to ``SamplingParams`` (§9.3).  ``batch_invariant`` is always ``False``
     for this adapter (§9.2.4).
+
+    The prompt is composed of two messages (system + user) produced by
+    ``render_fn`` (ADR-015, TAREFA-316).  When ``render_fn`` is ``None``, the
+    default uses :func:`PromptRegistry.render_rag_generation` with the
+    ``v1_production`` bundle, which replicates the production prompt verbatim.
+
+    The raw output is stripped of ``<think>…</think>`` blocks before being
+    stored in :class:`~inteligenciomica_eval.domain.ports.GenerationOutput`.
 
     Retries on :class:`openai.APIConnectionError` and :class:`openai.RateLimitError`
     with exponential backoff (multiplier=1, min=1 s, max=8 s, max 3 attempts).
@@ -47,8 +67,10 @@ class VLLMGeneratorAdapter:
             (e.g. ``"http://localhost:8000/v1"``).  The URL is passed verbatim to
             ``openai.AsyncOpenAI(base_url=url)``.
         model: model identifier served by vLLM (must match the loaded model name).
-        prompt_fn: ``(question, contexts) -> prompt_str``; if ``None`` a minimal
-            default is used (will be replaced by ``PromptRegistry`` in TAREFA-015).
+        render_fn: ``(question, contexts) -> (system_content, user_content)``; if
+            ``None`` the default uses the ``v1_production`` bundle from
+            :class:`~inteligenciomica_eval.infrastructure.prompts.registry.PromptRegistry`
+            (ADR-015).  Inject a custom callable for tests or alternative bundles.
         http_client: optional ``httpx.AsyncClient`` for testing / transport injection.
         _retry_stop: tenacity stop condition override (for testing — default is
             ``stop_after_attempt(3)``).
@@ -61,14 +83,14 @@ class VLLMGeneratorAdapter:
         url: str,
         model: str,
         *,
-        prompt_fn: Callable[[str, Sequence[Chunk]], str] | None = None,
+        render_fn: (Callable[[str, Sequence[Chunk]], tuple[str, str]] | None) = None,
         http_client: httpx.AsyncClient | None = None,
         _retry_stop: Any = None,
         _retry_wait: Any = None,
     ) -> None:
         self._model = model
-        self._prompt_fn: Callable[[str, Sequence[Chunk]], str] = (
-            prompt_fn or _default_prompt_fn
+        self._render_fn: Callable[[str, Sequence[Chunk]], tuple[str, str]] = (
+            render_fn if render_fn is not None else _default_render_fn
         )
         self._client = openai.AsyncOpenAI(
             base_url=url,
@@ -110,11 +132,12 @@ class VLLMGeneratorAdapter:
         Returns:
             :class:`~inteligenciomica_eval.domain.ports.GenerationOutput` with
             ``batch_invariant=False`` (constant for this adapter, §9.2.4).
+            The ``text`` field has ``<think>…</think>`` blocks stripped.
 
         Raises:
             GenerationError: on any generation failure (including retries exhausted).
         """
-        prompt = self._prompt_fn(question, contexts)
+        system, user = self._render_fn(question, contexts)
         t0 = time.monotonic()
         response: openai.types.chat.ChatCompletion | None = None
 
@@ -128,7 +151,10 @@ class VLLMGeneratorAdapter:
                 with attempt:
                     response = await self._client.chat.completions.create(
                         model=self._model,
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
                         temperature=temperature,
                         extra_body={"seed": seed},
                     )
@@ -141,8 +167,11 @@ class VLLMGeneratorAdapter:
         choice = response.choices[0]
         usage = response.usage
 
+        raw_text = choice.message.content or ""
+        text = _THINK_RE.sub("", raw_text).strip()
+
         output = GenerationOutput(
-            text=choice.message.content or "",
+            text=text,
             tokens_in=usage.prompt_tokens if usage else 0,
             tokens_out=usage.completion_tokens if usage else 0,
             latency_ms=latency_ms,
@@ -157,6 +186,9 @@ class VLLMGeneratorAdapter:
             tokens_out=output.tokens_out,
             latency_ms=output.latency_ms,
             batch_invariant=output.batch_invariant,
+            system_len=len(system),
+            user_len=len(user),
+            num_chunks=len(contexts),
         )
 
         return output

@@ -162,6 +162,13 @@ class RoundConfig(BaseModel):
     # "external" = servidores pré-existentes acessados por túnel; cada modelo
     #   no registry deve ter endpoint_env configurado.
     server_mode: Literal["managed", "external"] = "managed"
+    # Bundle de prompt de geração versionado (ADR-015, TAREFA-316).
+    # Seleciona qual par (system.txt, user.j2) em infrastructure/prompts/rag/<version>/
+    # é usado pelo VLLMGeneratorAdapter. O bundle "v1_production" replica o prompt de
+    # produção verbatim. Novas redações entram como novas versões no directório rag/.
+    # O campo prompt_version do schema §5.3 grava ESTA versão (não o git-describe do
+    # PromptRegistry, que era o comportamento anterior — ADR-015 §D3).
+    generation_prompt_version: str = "v1_production"
 
     @field_validator("phases")
     @classmethod
@@ -242,9 +249,25 @@ def load_round_config(path: Path) -> RoundConfig:
     if not isinstance(raw, dict):
         raise ConfigValidationError("(root)", "YAML must be a mapping at top level")
     try:
-        return RoundConfig.model_validate(raw)
+        config = RoundConfig.model_validate(raw)
     except pydantic.ValidationError as exc:
         first = exc.errors()[0]
         field = ".".join(str(loc) for loc in first["loc"])
         reason = first["msg"]
         raise ConfigValidationError(field, reason) from exc
+
+    # Cross-check generation_prompt_version against available bundles (ADR-015).
+    # Lazy import keeps schema.py free of registry dependency at import time.
+    from inteligenciomica_eval.infrastructure.prompts.registry import (
+        get_default_registry,
+    )
+
+    available = get_default_registry().list_rag_versions()
+    if config.generation_prompt_version not in available:
+        raise ConfigValidationError(
+            "generation_prompt_version",
+            f"versão {config.generation_prompt_version!r} não encontrada. "
+            f"Versões disponíveis: {available}",
+        )
+
+    return config

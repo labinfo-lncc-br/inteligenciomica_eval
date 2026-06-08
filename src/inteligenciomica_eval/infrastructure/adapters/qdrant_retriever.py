@@ -147,6 +147,7 @@ class QdrantRetrieverAdapter:
                 id=str(p.id),
                 text=str((p.payload or {}).get("text", "")),
                 score=p.score,
+                source=str((p.payload or {}).get("source", "")),
             )
             for p in points
         )

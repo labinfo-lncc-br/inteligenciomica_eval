@@ -71,3 +71,9 @@ scoring:
 experiment_b:
   canonical_context_source: "IDx_400k"
   canonical_top_k: 5
+
+# Bundle de prompt de geração (ADR-015, TAREFA-316):
+# Replica o prompt de produção verbatim (system_prompt.txt + _build_prompt_with_context).
+# Para A/B de redações de prompt, criar nova versão em
+# src/inteligenciomica_eval/infrastructure/prompts/rag/ e alterar este campo.
+generation_prompt_version: "v1_production"

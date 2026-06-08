@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
@@ -218,10 +218,18 @@ def _entry_to_model_spec(entry: object, max_model_len: int) -> ModelSpec:
 class _VLLMGeneratorFactory:
     """GeneratorFactory concreta para produção (ADR-008 — URL de env var, não YAML)."""
 
-    def __init__(self, port_to_model: dict[int, str]) -> None:
+    def __init__(
+        self,
+        port_to_model: dict[int, str],
+        prompt_registry: Any,  # PromptRegistry — lazy import evita dep circular
+        prompt_version: str,
+    ) -> None:
         self._port_to_model = port_to_model
+        self._prompt_registry = prompt_registry
+        self._prompt_version = prompt_version
 
     def __call__(self, url: str) -> GeneratorPort:
+        from inteligenciomica_eval.domain.ports import Chunk as _Chunk
         from inteligenciomica_eval.infrastructure.adapters.vllm_generator import (
             VLLMGeneratorAdapter,
         )
@@ -232,7 +240,22 @@ class _VLLMGeneratorFactory:
             model = self._port_to_model.get(port, "model")
         except (IndexError, ValueError):
             model = "model"
-        return VLLMGeneratorAdapter(url=url, model=model)
+
+        # Closure captura registry + version; tipos locais para satisfazer mypy.
+        _registry = self._prompt_registry
+        _version = self._prompt_version
+
+        def _render(
+            question: str,
+            contexts: Sequence[_Chunk],
+        ) -> tuple[str, str]:
+            return _registry.render_rag_generation(  # type: ignore[no-any-return]
+                version=_version,
+                question=question,
+                contexts=contexts,
+            )
+
+        return VLLMGeneratorAdapter(url=url, model=model, render_fn=_render)
 
 
 # ---------------------------------------------------------------------------
@@ -582,7 +605,7 @@ def build_container(
         vllm_version=_probed_vllm_ver,
         ragas_version=_prov.ragas_version,
         config_hash=_prov.config_hash,
-        prompt_version=prompt_registry.prompt_version,
+        prompt_version=config.generation_prompt_version,
     )
 
     # --- Adapters de rede ---
@@ -614,7 +637,11 @@ def build_container(
     deterministic_metric = DeterministicMetricsAdapter()
 
     port_to_model = {spec.port: name for name, spec in model_spec_map.items()}
-    generator_factory = _VLLMGeneratorFactory(port_to_model)
+    generator_factory = _VLLMGeneratorFactory(
+        port_to_model,
+        prompt_registry=prompt_registry,
+        prompt_version=config.generation_prompt_version,
+    )
 
     # --- BenchmarkLoader — precedência explícita de origem das perguntas (TAREFA-313) ---
     # (a) BENCHMARK_QUESTIONS_PATH (env) → override, precedência máxima

@@ -48,11 +48,14 @@ class Chunk:
         id: identificador único do chunk na base.
         text: conteúdo textual do chunk.
         score: score de similaridade/relevância retornado pelo retriever.
+        source: identificador da fonte (PMID) extraído do payload da base vetorial.
+            Default ``""`` — não quebra chamadas existentes (campo aditivo).
     """
 
     id: str
     text: str
     score: float
+    source: str = ""
 
 
 @dataclass(frozen=True, slots=True)

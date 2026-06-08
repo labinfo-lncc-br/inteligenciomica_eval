@@ -1,4 +1,4 @@
-"""Unit tests for VLLMGeneratorAdapter (TAREFA-014).
+"""Unit tests for VLLMGeneratorAdapter (TAREFA-014 + TAREFA-316).
 
 Mocks ``openai.AsyncOpenAI.chat.completions.create`` via ``AsyncMock`` — an
 environment-independent approach that intercepts at the SDK layer without relying on
@@ -9,10 +9,14 @@ The mock is injected via direct attribute assignment after the adapter is built:
     adapter._client.chat.completions.create = AsyncMock(...)
 This is possible because ``openai.AsyncCompletions.create`` is a regular instance method
 and Python does not prevent replacing it on the object level.
+
+TAREFA-316: prompt is now system + user messages (ADR-015). render_fn replaces prompt_fn.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -25,7 +29,7 @@ from inteligenciomica_eval.domain.ports import Chunk, GenerationOutput, Generato
 from inteligenciomica_eval.domain.value_objects import LLMId
 from inteligenciomica_eval.infrastructure.adapters.vllm_generator import (
     VLLMGeneratorAdapter,
-    _default_prompt_fn,
+    _default_render_fn,
 )
 
 # ---------------------------------------------------------------------------
@@ -36,17 +40,27 @@ _BASE_URL = "http://localhost:8000/v1"
 _MODEL = "test-model"
 _ENDPOINT = f"{_BASE_URL}/chat/completions"
 
-# Values matching tests/fixtures/vllm_generator_response.json
 _FIXTURE_TEXT = "DNA replication is the process by which a DNA molecule is copied."
 _FIXTURE_TOKENS_IN = 128
 _FIXTURE_TOKENS_OUT = 16
 
-# Minimal httpx objects needed to instantiate openai SDK error types.
-# These never reach the network — they exist only to satisfy constructor signatures.
 _DUMMY_REQUEST = httpx.Request("POST", _ENDPOINT)
 _DUMMY_RESP_429 = httpx.Response(429, request=_DUMMY_REQUEST)
 _DUMMY_RESP_422 = httpx.Response(422, request=_DUMMY_REQUEST)
 _DUMMY_RESP_400 = httpx.Response(400, request=_DUMMY_REQUEST)
+
+_SYSTEM = "You are a biomedical assistant."
+_USER = "Context:\n-----\nSome context.\n-----\nQuery: What is DNA?"
+
+_CHUNK = Chunk(
+    id="c1",
+    text="DNA replication occurs in the cell nucleus.",
+    score=0.95,
+    source="12345678",
+)
+_LLM = LLMId("test-model")
+
+_FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "fixtures"
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +73,7 @@ def _mock_completion(
     tokens_in: int = _FIXTURE_TOKENS_IN,
     tokens_out: int = _FIXTURE_TOKENS_OUT,
 ) -> MagicMock:
-    """Create a minimal ChatCompletion mock matching vllm_generator_response.json."""
+    """Create a minimal ChatCompletion mock."""
     comp = MagicMock()
     comp.choices = [MagicMock()]
     comp.choices[0].message.content = text
@@ -69,16 +83,31 @@ def _mock_completion(
     return comp
 
 
-def _make_adapter(create_mock: AsyncMock | None = None) -> VLLMGeneratorAdapter:
-    """Return a VLLMGeneratorAdapter with ``create()`` intercepted by *create_mock*.
+def _make_render_fn(
+    system: str = _SYSTEM,
+    user: str = _USER,
+) -> object:
+    """Build a deterministic render_fn that returns fixed (system, user) strings."""
 
-    Mocks at the SDK layer so that no I/O occurs, regardless of transport or
-    event-loop policy.  When *create_mock* is ``None`` the adapter is returned
-    without any mock (useful for lifecycle / protocol tests).
+    def _render(question: str, contexts: object) -> tuple[str, str]:
+        return (system, user)
+
+    return _render
+
+
+def _make_adapter(
+    create_mock: AsyncMock | None = None,
+    render_fn: object = None,
+) -> VLLMGeneratorAdapter:
+    """Return a VLLMGeneratorAdapter with ``create()`` and optionally render_fn set.
+
+    When *create_mock* is ``None`` no SDK mock is applied (lifecycle / protocol tests).
+    When *render_fn* is ``None`` a fixed deterministic render_fn is used.
     """
     adapter = VLLMGeneratorAdapter(
         url=_BASE_URL,
         model=_MODEL,
+        render_fn=render_fn if render_fn is not None else _make_render_fn(),  # type: ignore[arg-type]
         _retry_stop=stop_after_attempt(3),
         _retry_wait=wait_none(),
     )
@@ -87,12 +116,8 @@ def _make_adapter(create_mock: AsyncMock | None = None) -> VLLMGeneratorAdapter:
     return adapter
 
 
-_CHUNK = Chunk(id="c1", text="DNA replication occurs in the cell nucleus.", score=0.95)
-_LLM = LLMId("test-model")
-
-
 # ---------------------------------------------------------------------------
-# Happy path
+# Happy path — basic generation
 # ---------------------------------------------------------------------------
 
 
@@ -195,38 +220,93 @@ async def test_generate_temperature_in_request_body() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Prompt construction
+# System + user messages (TAREFA-316)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-def test_default_prompt_fn_includes_question_and_context() -> None:
-    chunk = Chunk(id="c1", text="relevant context", score=0.9)
-    prompt = _default_prompt_fn("What is genomics?", [chunk])
+@pytest.mark.asyncio
+async def test_generate_sends_exactly_two_messages() -> None:
+    """Adapter must send [system, user] — never a single user message."""
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
 
-    assert "What is genomics?" in prompt
-    assert "relevant context" in prompt
+    await adapter.generate(
+        llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.0
+    )
 
-
-@pytest.mark.unit
-def test_default_prompt_fn_lists_multiple_contexts() -> None:
-    chunks = [
-        Chunk(id="c1", text="context A", score=0.9),
-        Chunk(id="c2", text="context B", score=0.8),
-    ]
-    prompt = _default_prompt_fn("Q?", chunks)
-    assert "context A" in prompt
-    assert "context B" in prompt
+    messages = mock_create.call_args.kwargs["messages"]
+    assert len(messages) == 2
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_custom_prompt_fn_is_used() -> None:
+async def test_generate_first_message_is_system() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
+
+    await adapter.generate(
+        llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.0
+    )
+
+    messages = mock_create.call_args.kwargs["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == _SYSTEM
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_second_message_is_user() -> None:
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = _make_adapter(mock_create)
+
+    await adapter.generate(
+        llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.0
+    )
+
+    messages = mock_create.call_args.kwargs["messages"]
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"] == _USER
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_render_fn_receives_question_and_contexts() -> None:
+    """render_fn must be called with the exact question and contexts passed to generate."""
+    received: list[object] = []
+
+    def _capture(question: str, contexts: object) -> tuple[str, str]:
+        received.append((question, contexts))
+        return (_SYSTEM, _USER)
+
     mock_create = AsyncMock(return_value=_mock_completion())
     adapter = VLLMGeneratorAdapter(
         url=_BASE_URL,
         model=_MODEL,
-        prompt_fn=lambda q, _ctx: f"CUSTOM: {q}",
+        render_fn=_capture,  # type: ignore[arg-type]
+        _retry_wait=wait_none(),
+    )
+    adapter._client.chat.completions.create = mock_create  # type: ignore[method-assign]
+
+    await adapter.generate(
+        llm=_LLM, question="my question", contexts=[_CHUNK], seed=0, temperature=0.0
+    )
+
+    assert len(received) == 1
+    q, ctx = received[0]  # type: ignore[misc]
+    assert q == "my question"
+    assert list(ctx) == [_CHUNK]  # type: ignore[call-overload]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_custom_render_fn_is_used() -> None:
+    """Injecting a custom render_fn changes the messages sent to the LLM."""
+    mock_create = AsyncMock(return_value=_mock_completion())
+    adapter = VLLMGeneratorAdapter(
+        url=_BASE_URL,
+        model=_MODEL,
+        render_fn=lambda q, _ctx: ("CUSTOM_SYS", f"CUSTOM_USER: {q}"),
         _retry_wait=wait_none(),
     )
     adapter._client.chat.completions.create = mock_create  # type: ignore[method-assign]
@@ -235,8 +315,108 @@ async def test_custom_prompt_fn_is_used() -> None:
         llm=_LLM, question="my question", contexts=[_CHUNK], seed=0, temperature=0.1
     )
 
-    call_kwargs = mock_create.call_args.kwargs
-    assert call_kwargs["messages"][0]["content"] == "CUSTOM: my question"
+    messages = mock_create.call_args.kwargs["messages"]
+    assert messages[0]["content"] == "CUSTOM_SYS"
+    assert messages[1]["content"] == "CUSTOM_USER: my question"
+
+
+# ---------------------------------------------------------------------------
+# Strip <think> tags (TAREFA-316)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_strips_think_tags_inline() -> None:
+    raw = "<think>hidden reasoning</think>Final answer."
+    mock_create = AsyncMock(return_value=_mock_completion(text=raw))
+    adapter = _make_adapter(mock_create)
+
+    result = await adapter.generate(
+        llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.0
+    )
+
+    assert result.text == "Final answer."
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_strips_think_tags_multiline() -> None:
+    raw = "<think>\nline 1\nline 2\n</think>Clean answer."
+    mock_create = AsyncMock(return_value=_mock_completion(text=raw))
+    adapter = _make_adapter(mock_create)
+
+    result = await adapter.generate(
+        llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.0
+    )
+
+    assert result.text == "Clean answer."
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_no_think_tags_unchanged() -> None:
+    raw = "  Answer without think tags.  "
+    mock_create = AsyncMock(return_value=_mock_completion(text=raw))
+    adapter = _make_adapter(mock_create)
+
+    result = await adapter.generate(
+        llm=_LLM, question="Q?", contexts=[_CHUNK], seed=0, temperature=0.0
+    )
+
+    assert result.text == "Answer without think tags."
+
+
+# ---------------------------------------------------------------------------
+# Fidelidade de referência — fixture de produção (TAREFA-316)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_fidelity_against_production_fixture() -> None:
+    """Validate that render_rag_generation with v1_production matches the production fixture."""
+    from inteligenciomica_eval.infrastructure.prompts.registry import PromptRegistry
+
+    fixture = json.loads(
+        (_FIXTURES_DIR / "production_messages_fixture.json").read_text(encoding="utf-8")
+    )
+    registry = PromptRegistry()
+    chunks = [
+        Chunk(
+            id=c["id"],
+            text=c["text"],
+            score=c["score"],
+            source=c["source"],
+        )
+        for c in fixture["chunks"]
+    ]
+    system, user = registry.render_rag_generation(
+        version="v1_production",
+        question=fixture["question"],
+        contexts=chunks,
+    )
+
+    # System must be non-empty and match the production system_prompt.txt content.
+    assert len(system) > 100
+    assert "InteligenciÔmica" in system
+
+    # User must follow the exact production wrapper format.
+    assert user == fixture["expected_user"]
+
+    # Context entries must use PMID format without space: "[PMID:xxxxx]"
+    assert "[PMID:38291047]" in user
+    assert "[PMID:87654321]" in user
+
+
+# ---------------------------------------------------------------------------
+# Seleção por rodada — prompt_version muda com generation_prompt_version
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_default_render_fn_symbol_is_exported() -> None:
+    """_default_render_fn must be importable (tested as a symbol, not called live)."""
+    assert callable(_default_render_fn)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +427,6 @@ async def test_custom_prompt_fn_is_used() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_non_retryable_error_raises_generation_error() -> None:
-    """HTTP 422 (UnprocessableEntity) is non-retryable; must raise GenerationError."""
     exc = openai.UnprocessableEntityError(
         "invalid request", response=_DUMMY_RESP_422, body=None
     )
@@ -263,7 +442,6 @@ async def test_non_retryable_error_raises_generation_error() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_non_retryable_error_not_retried() -> None:
-    """A 400 bad-request must not be retried — exactly one SDK call."""
     exc = openai.BadRequestError("bad request", response=_DUMMY_RESP_400, body=None)
     mock_create = AsyncMock(side_effect=exc)
     adapter = _make_adapter(mock_create)
@@ -284,7 +462,6 @@ async def test_non_retryable_error_not_retried() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_retries_three_times_on_connection_error() -> None:
-    """APIConnectionError triggers up to 3 attempts via tenacity."""
     exc = openai.APIConnectionError(
         message="connection refused", request=_DUMMY_REQUEST
     )
@@ -302,7 +479,6 @@ async def test_retries_three_times_on_connection_error() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_succeeds_after_transient_connection_error() -> None:
-    """Adapter succeeds on the 3rd attempt after 2 connection failures."""
     call_count = 0
 
     def _side_effect(**kwargs: object) -> MagicMock:
@@ -333,7 +509,6 @@ async def test_succeeds_after_transient_connection_error() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_retries_three_times_on_rate_limit_error() -> None:
-    """RateLimitError triggers up to 3 attempts, same as APIConnectionError."""
     exc = openai.RateLimitError(
         "rate limit exceeded", response=_DUMMY_RESP_429, body=None
     )
@@ -361,6 +536,5 @@ def test_adapter_satisfies_generator_port() -> None:
 
 @pytest.mark.unit
 async def test_adapter_close_shuts_down_client() -> None:
-    """await adapter.close() must not raise and must close the underlying client."""
     adapter = _make_adapter()
-    await adapter.close()  # must complete without exception
+    await adapter.close()
