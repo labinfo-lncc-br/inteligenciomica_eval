@@ -418,7 +418,8 @@ Cada linha do Parquet contém três colunas de proveniência:
 > sem `True`. Só fica `True` se a sonda executar **e** confirmar tokens idênticos.
 
 O run report (log estruturado ao final do ciclo) inclui a seção `endpoints_provenance`
-com `config_hash`, topologia, endpoint mascarado (`scheme://host:port/***`),
+com `config_hash`, topologia, endpoint mascarado (`scheme://host:port` — sem path,
+pós-TAREFA-314),
 `vllm_version` por gerador e flag `judge_det`:
 
 ```json
