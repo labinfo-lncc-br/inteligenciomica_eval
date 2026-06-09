@@ -381,7 +381,7 @@ sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
 | 020 | `AnnotationReaderAdapter` (JSONL de anotações críticas) | ✅ |
 | 021 | Gate de integração M1 (pipeline adapter end-to-end + smoke E2E) | ✅ |
 
-### M3 — Orquestração das 4 GPUs ✅ CONCLUÍDO (TAREFA-301 a 311)
+### M3 — Orquestração das 4 GPUs ✅ CONCLUÍDO (TAREFA-301 a 316)
 
 | Tarefa | Descrição | Status |
 |--------|-----------|--------|
@@ -396,6 +396,10 @@ sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
 | 309 | DI Wiring + CLI `run` + `BenchmarkLoader` | ✅ |
 | 310 | Gate E2E ciclo completo M3 | ✅ |
 | 311 | `ExternalVLLMServerManager` + probes de proveniência (ADR-014) | ✅ |
+| 312 | Gate de integração 309/310/311/606 (retrocompat log + spec §4.3/§5.3 + `determinism_verified`) | ✅ |
+| 313 | Contrato benchmark — validação de `BenchmarkLoader` + batch de perguntas | ✅ |
+| 314 | Observabilidade — `mask_url` centralizado + probes mascarados + payload juiz logado | ✅ |
+| 316 | Fidelidade do prompt de geração + bundle versionado `v1_production` (ADR-015) | ✅ |
 
 ### M4 — Decisão Executiva ✅ CONCLUÍDO (TAREFA-401 a 409)
 
@@ -411,7 +415,7 @@ sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
 | 408 | `HTMLReportAdapter` + CLI `analyze`/`report`/`status`/`show-config` | ✅ |
 | 409 | Gate E2E M4 (pipeline completo até relatório HTML) | ✅ |
 
-### M6 — Qualidade e Segurança ✅ CONCLUÍDO (TAREFA-601 a 605)
+### M6 — Qualidade e Segurança ✅ CONCLUÍDO (TAREFA-601 a 607)
 
 | Tarefa | Descrição | Status |
 |--------|-----------|--------|
@@ -420,21 +424,26 @@ sem isso, cada tentativa do tenacity faria até 3 chamadas HTTP (3 × 3 = 9).
 | 603 | Property-based tests hypothesis (4 targets, 15 testes) | ✅ |
 | 604 | Manual de operação final + smoke-test (7 subcomandos) | ✅ |
 | 605 | Revisão de segurança final (S1–S9, ADR-003 template fix) | ✅ |
+| 606 | Emenda manual de operação + `validate_manual.py` (smoke-test 7 subcomandos) | ✅ |
+| 607 | Doc-sync: arquitetura v1.2 + visão v1.1 (pós-M3 311/312/314/316) | ✅ |
+| 315 | Acurácia documental: ADR-014 fix + manual + `validate_manual.py` alinhados | ✅ |
 
 ### Cobertura atual
 
 ```
-1252 passed, 6 skipped — 89.51% total coverage
+1342 passed, 16 skipped — 89.66% total coverage
 external_vllm_server_manager.py: 100% | endpoint_probe.py: 100% | vllm_server_manager.py: 100%
-deterministic_metrics.py: 100% | prometheus_judge.py: 100% | vllm_generator.py: 100%
+deterministic_metrics.py: 100% | prometheus_judge.py: 100% | vllm_generator.py: 96%
 annotation_reader.py: 100% | ragas_metrics.py: 87% | qdrant_retriever.py: 96%
 ```
 
-> Os 6 skips locais = 5 testes Qdrant (sem Docker) + 1 pipeline M1 (sem Docker).
+> Os 16 skips locais = 5 testes Qdrant (sem Docker) + 1 pipeline M1 (sem Docker) + skips de golden/integração.
 > Smoke E2E agora roda com `E2E_ENABLED` — não contam mais como skip frequente.
 > No CI o job `integration` executa os de Qdrant.
 > `ragas_metrics.py` em 87% local: o ramo de construção real (embeddings + LLM) é coberto
 > apenas pelo teste de integração, que roda no job `integration` do CI.
+> `vllm_generator.py` em 96%: linhas 33–37 (`_default_render_fn` lazy import) não são exercidas
+> pelos testes unitários (que injetam `render_fn`); cobertas pelos testes de integração M1.
 
 > **Gate de cobertura local**: usar `-n 4` (não `-n auto`) — a máquina de dev tem 20 núcleos
 > mas só 15 GB de RAM; com `-n auto`, os 20 workers importam torch (`bert_score` +
@@ -465,12 +474,15 @@ annotation_reader.py: 100% | ragas_metrics.py: 87% | qdrant_retriever.py: 96%
 - Carregamento lazy + cache interno (`_ensure_loaded()`).
 - Levanta `StorageError` em arquivo ausente ou question_id não encontrado.
 
-### PromptRegistry (TAREFA-015 — concluída)
+### PromptRegistry (TAREFA-015 + TAREFA-316 — concluídas)
 
-- Templates em `src/inteligenciomica_eval/infrastructure/prompts/*.j2`.
+- Templates em `src/inteligenciomica_eval/infrastructure/prompts/*.j2` (rubrica) e `prompts/rag/<versão>/` (bundles RAG).
 - `jinja2.Environment(loader=PackageLoader(...))`.
-- `prompt_version` = `git describe --tags --dirty` capturado na inicialização.
+- `prompt_version` = `git describe --tags --dirty` capturado na inicialização (usado pela rubrica).
 - `get_default_registry() -> PromptRegistry` via `functools.cache` — singleton por processo.
+- `render_rag_generation(question, contexts, version) -> tuple[str, str]`: devolve `(system, user)` do bundle especificado.
+- `list_rag_versions() -> list[str]`: lista bundles disponíveis em `prompts/rag/`; usado por `load_round_config` para validar `generation_prompt_version`.
+- Versão inexistente em `render_rag_generation` → `ValueError` com lista de disponíveis.
 
 ### PrometheusJudgeAdapter (TAREFA-016 — concluída)
 
@@ -612,3 +624,22 @@ annotation_reader.py: 100% | ragas_metrics.py: 87% | qdrant_retriever.py: 96%
 - `RAGASLayer1Adapter.__init__` chama `_build_embeddings(config)` (carrega HuggingFace) na construção.
 - Testes de wiring em `test_wiring_external.py` usam fixture `autouse=True` que faz patch de `_build_embeddings` → `MagicMock()` — sem downloads de modelo em CI offline.
 - Testes de CLI em `test_run_external.py` usam `_make_asyncio_run_mock()` com `side_effect` que fecha coroutines (`coro.close()`) — elimina `RuntimeWarning: coroutine was never awaited`.
+
+### Bundle de prompt versionado e fidelidade de geração (TAREFA-316 — concluída)
+
+- **ADR-015**: bundle versionado `{system.txt, user.j2}` em `infrastructure/prompts/rag/<versão>/`.
+  - `system.txt` = texto puro (sem variáveis Jinja2), carregado via `loader.get_source()`.
+  - `user.j2` = template Jinja2 com `{{ context }}` e `{{ question }}`.
+  - Contexto formatado como `"\n\n".join(f"[PMID:{c.source or 'N/A'}] {c.text}" for c in contexts)`.
+  - Bundle `v1_production` = cópia verbatim do `system_prompt.txt` de produção.
+- **`render_fn` substitui `prompt_fn`**: `VLLMGeneratorAdapter.__init__` aceita
+  `render_fn: Callable[[str, Sequence[Chunk]], tuple[str, str]] | None`; default é
+  `_default_render_fn` (lazy import do registry, bundle `v1_production`). Injeção para testes:
+  `render_fn=lambda q, ctx: ("SYS", "USER")`.
+- **Mensagens system+user**: `VLLMGeneratorAdapter` envia `messages=[{"role": "system", ...}, {"role": "user", ...}]` — não mais prompt única.
+- **Strip de `<think>`**: `_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)` aplicado à saída bruta ANTES de montar `GenerationOutput` (mesmo comportamento do `orchestrator_service.py` de produção).
+- **`Chunk.source: str = ""`**: campo aditivo adicionado em `domain/ports.py`; `QdrantRetrieverAdapter` preenche de `payload["source"]`; ausente → `""` (sem erro).
+- **`RoundConfig.generation_prompt_version`**: campo com default `"v1_production"`; `load_round_config` valida contra `registry.list_rag_versions()` após parse Pydantic — versão inválida levanta `ConfigValidationError` com lista de disponíveis.
+- **`prompt_version` no Parquet = `config.generation_prompt_version`** (ex.: `"v1_production"`), não mais `git describe` — proveniência diretamente ligada ao bundle usado.
+- **Log `vllm_generation_completed`** inclui `system_len`, `user_len`, `num_chunks`; system/user NÃO logados crus (ADR-008 / política TAREFA-314).
+- **Adicionar novo bundle**: criar `infrastructure/prompts/rag/<nova_versão>/system.txt` + `user.j2`; setar `generation_prompt_version: <nova_versão>` no YAML da rodada.

@@ -9,9 +9,9 @@ Subsistema de Validação InteligenciÔmica.
 | M0 (001–012) | Fundação do Domínio (VOs, entidades, ports, serviços) | ✅ |
 | M1 (013–021) | Adapters de Infraestrutura (Qdrant, vLLM, RAGAS, BERTScore) | ✅ |
 | M2 (022–028) | Pipeline de Métricas (Camadas 1+2, gate de integração M2) | ✅ |
-| M3 (301–311) | Orquestração das 4 GPUs + ExternalVLLMServerManager + probes de proveniência | ✅ |
+| M3 (301–316) | Orquestração das 4 GPUs + ExternalVLLMServerManager + probes de proveniência + prompt versionado (ADR-015) | ✅ |
 | M4 (401–409) | Decisão executiva (Anotação · Agregação · Estatística · Relatório) | ✅ |
-| M6 (601–605) | Qualidade e Segurança (mutation testing, Cohen's κ, property-based, manual) | ✅ |
+| M6 (601–607) | Qualidade e Segurança (mutation testing, Cohen's κ, property-based, manual, doc-sync) | ✅ |
 | M5 (501–5xx) | Rodada 2 (OFAT) + Funil de dois estágios | 🔜 |
 
 ## Quickstart
@@ -37,7 +37,14 @@ ielm-eval run --config round_config.yaml
 # Modo external: vLLM já está rodando (cluster LNCC / deploy dedicado)
 # Configurar server_mode: external + endpoint_env por modelo no YAML
 ielm-eval run --config round_config.yaml --require-verified-determinism
+
+# Dry-run: valida a config (incluindo generation_prompt_version) sem executar
+ielm-eval run --config round_config.yaml --dry-run
 ```
+
+O campo `generation_prompt_version` no YAML seleciona o bundle de prompt RAG
+(padrão: `"v1_production"`). Bundles disponíveis ficam em
+`src/inteligenciomica_eval/infrastructure/prompts/rag/`.
 
 ## Decisão executiva (M4)
 
@@ -112,6 +119,10 @@ src/inteligenciomica_eval/
 │   │   └── stats_adapters.py                # Wilcoxon/Friedman/MLM (M4)
 │   ├── config/
 │   ├── prompts/
+│   │   ├── registry.py           # PromptRegistry + render_rag_generation + list_rag_versions
+│   │   ├── rag/
+│   │   │   └── v1_production/    # Bundle de produção: system.txt + user.j2 (ADR-015, M3-316)
+│   │   └── *.j2                  # Templates de rubrica biomédica
 │   ├── provenance/
 │   │   └── endpoint_probe.py     # probe_served_model/vllm_version/judge_determinism (M3-311)
 │   └── repositories/
