@@ -1,11 +1,13 @@
 # Arquitetura Detalhada e Plano de Implementação — Subsistema de Validação do InteligenciÔmica
 
-**Versão:** 1.2
-**Data:** 8 de junho de 2026
+**Versão:** 1.3
+**Data:** 15 de junho de 2026
 **Status:** Proposta arquitetural para execução (deriva do documento de visão de alto nível v1.0, já aprovado pela equipe)
 **Documento-base:** `visao_alto_nivel_validacao_inteligenciomica.md` (v1.0)
 **Aprofunda:** itens 10 (stack), 11 (implementação/codificação) e 12 (riscos) do documento-base.
 **Destino:** servir de espinha dorsal para os prompts da dupla **Claude Code (desenvolvedor)** + **ChatGPT Codex (verificador)**.
+
+> **Changelog v1.3 (15/06/2026):** sincronização com o as-built de TAREFA-313/314/315/316 e doc-sync TAREFA-608. Destaques: (1) **ADR-015** — prompt de geração como bundle versionado `{system, user}` selecionável por rodada, fiel verbatim ao prompt de produção (§6); (2) `VLLMGeneratorAdapter` envia duas mensagens (`system` + `user`), contexto com PMID `"[PMID:n] texto"` e aplica strip de `<think>...</think>` — anotado em §3.4 passo 3b; (3) `Chunk.source` (PMID) populado pelo `QdrantRetrieverAdapter` (§3.4); (4) semântica de `prompt_version` refinada: grava o **bundle de geração** selecionado por `generation_prompt_version` (§5.3); (5) estrutura de `infrastructure/prompts/` atualizada para refletir `rag/<version>/system.txt` + `user.j2` + rubrica do juiz (§8); (6) campo `generation_prompt_version` adicionado ao YAML de rodada (§12.1) e à lista de proveniência (§12.2); (7) novo risco "prompt do eval diverge da produção" com mitigação (§13); (8) milestones §14.6 (TAREFA-313/314/316) e §14.9 (TAREFA-315/608) reconciliados; (9) §17.1 e rodapé atualizados para ADR-001..015 e TAREFA-001..608.
 
 > **Changelog v1.2 (08/06/2026):** sincronização com o as-built de TAREFA-309/310/311/312/606. Destaques: (1) mecanismo de perguntas via `RoundConfig.questions` + campo `questions:` no YAML de rodada (multi-área, TAREFA-313); (2) CLI `run` completo com `--run-id` obrigatório, `--phase A|B|both`, `--serial`, `--require-verified-determinism` (§15); (3) modo de implantação `external` — cliente x86 ↔ túnel SSH ↔ servidores vLLM/Qdrant compartilhados no GH200 — com proveniência verificada por sonda (ADR-014, TAREFA-311); (4) três novas colunas de proveniência no schema Parquet 43→46 (`server_mode`, `served_model_id`, `determinism_verified` — **já atualizadas em §§4.3/5.3 no gate 312**, não duplicadas aqui); (5) gate de integração TAREFA-312 (PASS); (6) **ADR-013** (funil da Rodada 2, M5 adiado) e **ADR-014** (managed vs external) adicionados ao catálogo (§6); (7) topologia §7.2 e §12 expandidos com o modo external; (8) §14.6/14.9 reconciliados; (9) §15 alinhado à CLI real (8 subcomandos).
 
@@ -199,7 +201,13 @@ domain/
 2. RunExperimentUseCase itera (base, llm, seed, question) — produto cartesiano da config
 3. Para cada célula:
    a. RetrieverPort.search(base, question, top_k)        → contexts + scores  [Qdrant]
+      (`QdrantRetrieverAdapter` preenche `Chunk.source` com o PMID do payload)
    b. GeneratorPort.generate(llm, question, contexts, seed) → answer          [vLLM-gen]
+      (`VLLMGeneratorAdapter` monta DUAS mensagens: `system` = texto do bundle selecionado
+      por `generation_prompt_version`; `user` = wrapper Jinja2 com contexto formatado como
+      `"[PMID:{source}] {text}"` unido por `"\n\n"`. A saída bruta passa por strip de
+      `<think>...</think>` antes de montar `GenerationOutput`. A assinatura de
+      `GeneratorPort` (§5.1) permanece inalterada — `system`/`user` são detalhe do adapter.)
    c. ResultWriterPort.append(linha parcial: pergunta, resposta, contexts, proveniência)
 4. (passada separada) ComputeMetricsUseCase lê linhas sem métricas:
    a. MetricSuitePort.score(...)        → camada 1     [vLLM-judge]
@@ -401,7 +409,7 @@ Mantém-se o esquema do doc-base, com **tipagem explícita** e **anotação de o
 | `chunk_strategy` | `string` | config | sim | ex.: `fixed_512_overlap_50` |
 | `reranker` | `string` | config | sim | ou `"none"` |
 | `top_k` | `int32` | config | sim | |
-| `prompt_version` | `string` | config | sim | versão do template RAG |
+| `prompt_version` | `string` | config | sim | versão do **bundle de geração** (system+user) selecionado via `generation_prompt_version` (ADR-015) |
 | `temperature` | `float32` | config | sim | gerador=0.1; juiz=0.0 |
 | `seed` | `int32` | config | sim | 13 \| 42 \| 271 |
 | `batch_invariant` | `bool` | execução | sim | True=juiz, False=gerador (ADR-003) |
@@ -587,6 +595,17 @@ Cada decisão não-óbvia tem um registro curto (formato `system-architect` §3)
 **Referência de arquivo:** `docs/adr/ADR-014-server-mode-external.md`
 **Critério de reversão:** consolidação da infraestrutura em ambientes gerenciáveis pelo processo Python.
 
+### ADR-015: Prompt de geração versionado e selecionável por rodada; fidelidade à produção
+
+**Status:** Aceito (TAREFA-316)
+**Contexto:** O avaliador mede a qualidade do sistema InteligenciÔmica em produção. Para que o A/B entre modelos e prompts seja fidedigno, o estímulo enviado aos 5 geradores deve ser **idêntico ao de produção**. A versão anterior do `VLLMGeneratorAdapter` enviava uma única mensagem `user` com formato livre, sem mensagem `system`, sem PMID nos contextos e sem strip de `<think>` — divergências confirmadas contra o `orchestrator_service.py` de produção.
+**Decisão:** O prompt de geração é um **bundle versionado** `{system, user}` em `infrastructure/prompts/rag/<version>/`. O bundle padrão `v1_production` replica verbatim o prompt de produção: `system.txt` = texto puro (regras + citação + exemplos); `user.j2` = wrapper Jinja2 com contexto `"[PMID:{source}] {text}"` unido por `"\n\n"`. O gerador envia **duas mensagens** (system + user) e aplica strip de `<think>...</think>`. O campo `RoundConfig.generation_prompt_version` (default `"v1_production"`, validado no carregamento) seleciona o bundle; `prompt_version` no Parquet grava essa seleção. `Chunk.source` (PMID) é preenchido pelo `QdrantRetrieverAdapter` a partir do payload Qdrant.
+**Alternativas:** prompt inline no adapter (rejeitado: sem versionamento nem revisão — anti-pattern ADR-008); bundle único sem controle de versão (rejeitado: impossibilita A/B de prompt no Experimento B).
+**Consequências:** (i) fidelidade total ao estímulo de produção no Experimento B; (ii) prompt vira fator experimental controlável — diferentes bundles → diferentes `prompt_version` no Parquet → análise Wilcoxon/Friedman com grupo identificável; (iii) `prompt_version` tem semântica direta (bundle de geração, não git tag do registry); (iv) histórico de runs M0–M3 usava prompt simples — não comparáveis diretamente com runs `v1_production` (o campo `prompt_version` os distingue); (v) `Chunk` ganha campo `source`.
+**Referências:** ADR-003 (batch_invariant=False para o gerador — inalterado), ADR-005 (mensagens system+user são formato padrão OpenAI chat), ADR-008 (bundles não contêm endpoints; conteúdo do prompt não é logado cru).
+**Referência de arquivo:** `docs/adr/ADR-015-prompt-geracao-versionado.md`
+**Critério de reversão:** se o prompt de produção migrar para formato não-Jinja2 ou se o bundle de geração precisar de lógica Python não expressável em template.
+
 ---
 
 ## 7. Stack tecnológica detalhada (aprofunda item 10)
@@ -724,9 +743,13 @@ inteligenciomica_eval/
 │   │   │   ├── parquet_storage.py           # ResultWriter/ResultReader
 │   │   │   ├── gold_chunks.py               # GoldChunkReaderPort
 │   │   │   └── annotation_store.py          # AnnotationReaderPort
-│   │   ├── prompts/                          # templates versionados (.txt) — NUNCA inline
-│   │   │   ├── rag_answer.txt
-│   │   │   └── biomed_rubric.txt
+│   │   ├── prompts/                          # templates versionados — NUNCA inline
+│   │   │   ├── rag/                          # bundles de geração versionados (ADR-015)
+│   │   │   │   └── <version>/               # ex.: v1_production
+│   │   │   │       ├── system.txt           # mensagem system — texto puro, fiel à produção
+│   │   │   │       └── user.j2              # mensagem user — Jinja2 com {{ context }}/{{ question }}
+│   │   │   └── biomed_rubric*.j2            # rubrica do juiz (Camada 2)
+│   │   │   # Novas redações de prompt entram como nova <version>/ — sem alterar código
 │   │   └── config/
 │   │       ├── settings.py                   # pydantic-settings (env/segredos)
 │   │       ├── schema.py                      # modelos Pydantic do YAML de rodada
@@ -908,6 +931,7 @@ scoring:
     context_precision: 0.05
     answer_relevancy: 0.05
   failure_threshold: 0.70
+generation_prompt_version: v1_production  # bundle fiel à produção; novas redações = nova <version>/ em infrastructure/prompts/rag/
 experiment_b:
   canonical_context_source: IDx_400k  # ou "expert_curated"
   canonical_top_k: 8
@@ -915,7 +939,7 @@ experiment_b:
 
 ### 12.2. Proveniência gravada por linha (RF8)
 
-`config/provenance.py` calcula e injeta em cada `EvaluationResult`: `config_hash` (SHA-256 do YAML normalizado), `vllm_version`, `ragas_version`, `vllm` por fase, `batch_invariant`, `prompt_version`, timestamp UTC. **Sem isso, a reprodução futura é impossível** (doc-base §9.4).
+`config/provenance.py` calcula e injeta em cada `EvaluationResult`: `config_hash` (SHA-256 do YAML normalizado), `vllm_version`, `ragas_version`, `vllm` por fase, `batch_invariant`, `prompt_version` (= `generation_prompt_version` do YAML — grava o bundle de geração selecionado), timestamp UTC. **Sem isso, a reprodução futura é impossível** (doc-base §9.4).
 
 ### 12.3. Reprodutibilidade
 
@@ -966,6 +990,7 @@ Mantém a tabela do doc-base §12 e adiciona, para cada risco relevante à arqui
 | Segredo (endpoint/token) vazado no Git | Endpoints via env/`pydantic-settings`; YAML só referencia `*_env` | `settings.py`, YAML | `ruff`/revisão; nenhum segredo no YAML versionado |
 | Prompt injection indireta via chunk | Delimitação clara dados×instrução no template; saída validada por Pydantic | `prompts/*.txt`, parsing | Teste com chunk malicioso plantado |
 | Execução longa interrompida | Resumabilidade por `row_id` idempotente | `parquet_storage.py`, use cases | Unit: reexecução pula células existentes |
+| Prompt do eval diverge do de produção | Bundle `v1_production` replica verbatim (system+user); contexto `"[PMID:n] texto"` unido por `"\n\n"`; strip de `<think>` no adapter; `prompt_version` rastreia bundle usado | `infrastructure/prompts/rag/`, `vllm_generator.py` | Teste de fidelidade contra fixture de produção (mensagens system+user verificadas em `test_vllm_generator.py`) |
 
 
 ---
@@ -1093,8 +1118,11 @@ Aplica-se a **todas** as tarefas, herdado das skills:
 | TAREFA-310 | Gate E2E ciclo completo M3 | test-engineer | P0 | M | Pipeline completo (stubs) em ≤60 s; 5 fases Pass |
 | TAREFA-311 | `ExternalVLLMServerManager` + probes de proveniência (ADR-014) | backend-engineer | P0 | M | `server_mode=external`; probes served_model/version/determinism; `determinism_verified=False` default |
 | TAREFA-312 | Gate de integração 309/310/311/606 (PASS) | test-engineer | P0 | S | Retrocompat de logs; `determinism_verified` default confirmado; schema §4.3/§5.3 em 46 colunas |
+| TAREFA-313 | Contrato de benchmark — `BenchmarkLoader` + validação de `RoundConfig.questions` (multi-área) | backend-engineer | P0 | S | `questions:` no YAML carrega perguntas; `BenchmarkLoader` valida e resolve ids; `ConfigValidationError` em formato inválido |
+| TAREFA-314 | Observabilidade segura — `mask_url` centralizado + probes mascarados + payload do juiz logado | python-engineer | P1 | S | Helper único `mask_url` em `provenance/`; endpoints mascarados em todos os logs de probes; payload de rubrica logado sem conteúdo sensível |
+| TAREFA-316 | Prompt de geração versionado e fiel à produção — bundle `v1_production`, `generation_prompt_version` (ADR-015) | rag-engineer | P0 | M | Gerador envia system+user; contexto `"[PMID:n]"`; strip `<think>`; `Chunk.source`; versão validada no carregamento; `prompt_version` = bundle selecionado |
 
-**Go/no-go (as-built):** Rodada 1 (585 respostas) avaliada e persistida; juiz carregado 1× e geradores em ≤2 ondas; run report limpo com mapa GPU→modelo; modo external + probes de proveniência implementados e auditados; **gate para análise**.
+**Go/no-go (as-built):** Rodada 1 (585 respostas) avaliada e persistida; juiz carregado 1× e geradores em ≤2 ondas; run report limpo com mapa GPU→modelo; modo external + probes de proveniência implementados e auditados; saneamento do benchmark via `questions:` + masking unificado + prompt de geração fiel à produção (ADR-015); **gate para análise**.
 
 ---
 
@@ -1152,6 +1180,8 @@ Aplica-se a **todas** as tarefas, herdado das skills:
 | TAREFA-605 | Revisão final de segurança (segredos, prompt injection) | code-reviewer | P1 | S | Nenhum segredo no Git; teste de chunk malicioso |
 | TAREFA-606 | Manual de operação — emenda modo external (ADR-014, Seção 4-B) | python-engineer | P0 | S | Seção 4-B detalhada; `validate_manual.py` PASS |
 | TAREFA-607 | Doc-sync: arquitetura v1.2 + visão v1.1 (TAREFA-309/310/311/312) | python-engineer | P0 | M | Versões bumpadas; ADR-013/014 no catálogo; §7.2/§12/§14 reconciliados |
+| TAREFA-315 | Acurácia documental — ADR-014 fix + manual + `validate_manual.py` alinhados | python-engineer | P0 | S | ADR-014 corrigido; manual de operação reconciliado com as-built; smoke-test PASS |
+| TAREFA-608 | Doc-sync: arquitetura v1.3 + visão v1.2 (ADR-015, TAREFA-313/314/316) | python-engineer | P0 | S | ADR-015 no catálogo; §3.4/§5.3/§8/§12/§13/§14 reconciliados; bundles prompts documentados |
 
 **Go/no-go:** subsistema reprodutível, auditado e documentado para uso recorrente nas próximas rodadas.
 
@@ -1476,7 +1506,7 @@ A sequência de prompts segue o caminho crítico: todas as tarefas de M0 (na ord
 - [x] Requisitos funcionais (RF1–8) e não-funcionais (RNF1–6) capturados (seção 2).
 - [x] Bounded context único (Evaluation) com 3 sub-domínios nomeados (seção 4.2).
 - [x] Contratos explícitos: ports `Protocol` + DTOs Pydantic + esquema Parquet (seção 5).
-- [x] Decisões não-óbvias com ADR (seção 6, ADR-001..011).
+- [x] Decisões não-óbvias com ADR (seção 6, ADR-001..015).
 - [x] Riscos com mitigação localizada no código (seção 13).
 - [x] Plano incremental com MVP claro (M0 esqueleto → M4 decisão).
 - [x] Observabilidade definida (seção 10).
@@ -1518,4 +1548,4 @@ A sequência de prompts segue o caminho crítico: todas as tarefas de M0 (na ord
 ---
 
 **Documento de arquitetura detalhada — pronto para servir de base aos prompts de Claude Code (desenvolvimento) e ChatGPT Codex (verificação).**
-**Rastreabilidade:** ADR-001..011 · M0..M6 · TAREFA-001..605 · RF1..8 · RNF1..6 · P1..5.
+**Rastreabilidade:** ADR-001..015 · M0..M6 · TAREFA-001..608 · RF1..8 · RNF1..6 · P1..5.

@@ -1,6 +1,8 @@
 # Visão de Alto Nível — Subsistema de Validação do InteligenciÔmica
 
-**Versão:** 1.1 **Data:** 8 de junho de 2026 **Status:** Documento base (aprovado); atualizado para refletir o as-built de TAREFA-309/310/311/606
+**Versão:** 1.2 **Data:** 15 de junho de 2026 **Status:** Documento base (aprovado); atualizado para refletir o as-built de TAREFA-309/310/311/606/316
+
+> **Changelog v1.2 (15/06/2026):** acréscimo de ADR-015 — prompt de geração como bundle versionado `{system, user}` fiel à produção, selecionável por rodada via `generation_prompt_version` (§2.3, §6.2/§6.3, §11.2). O campo `prompt_version` no dataset grava o bundle de geração selecionado.
 
 > **Changelog v1.1 (08/06/2026):** acréscimo das duas topologias de implantação (managed co-localizado no GH200 vs external via túnel SSH para serviços compartilhados) e da proveniência verificada (ADR-014); nota em §9.4 sobre os campos `server_mode`, `served_model_id` e `determinism_verified` agora registrados no dataset. Demais seções inalteradas.
 
@@ -77,7 +79,7 @@ Cinco perguntas operacionais e científicas:
 - **Pareamento de amostras** — todas as configurações respondem exatamente às mesmas 13 perguntas, permitindo testes estatísticos pareados (alto poder com n pequeno).  
 - **One-Factor-At-a-Time (OFAT)** — em cada rodada, varia-se um fator de cada vez. Evita explosão combinatória e ambiguidade na atribuição de efeitos.  
 - **Multiplas camadas de evidência** — métricas automáticas, rubrica de LLM-juiz e anotação humana se complementam; nenhuma sozinha é confiável.  
-- **Versionamento rigoroso** — cada execução grava `prompt_version`, `embedding_model`, `chunk_strategy`, `judge_model`, `seed`, `temperature` para reprodutibilidade total.  
+- **Versionamento rigoroso** — cada execução grava `prompt_version` (versão do **bundle de geração selecionado** — bundle versionado `{system, user}` fiel ao prompt de produção, escolhido por `generation_prompt_version` no YAML de rodada), `embedding_model`, `chunk_strategy`, `judge_model`, `seed`, `temperature` para reprodutibilidade total. Novas redações de prompt entram como novas versões do bundle, sem alterar código (ADR-015).  
 - **Separação retrieval × geração** — métricas independentes para cada estágio do pipeline, permitindo diagnóstico de origem dos erros.
 
 ---
@@ -237,7 +239,7 @@ pergunta → contextos fixos (pré-determinados) → LLM → resposta
 
 Os contextos recuperados são **congelados** para todos os 5 LLMs (proposta: usar os top-8 chunks da base `IDx_400k` como contexto canônico, ou alternativamente os top-8 escolhidos manualmente por especialista a partir da curadoria dos chunks-ouro).
 
-**Objetivo:** isolar a habilidade de **síntese e fundamentação** do LLM, removendo o ruído do retrieval. Responde à pergunta: "dado o mesmo contexto, qual LLM responde melhor?"
+**Objetivo:** isolar a habilidade de **síntese e fundamentação** do LLM, removendo o ruído do retrieval. Responde à pergunta: "dado o mesmo contexto, qual LLM responde melhor?" O Experimento B é também o cenário canônico para comparar **redações de prompt**: variando `generation_prompt_version` entre execuções com retrieval fixo, é possível medir o impacto isolado do prompt de geração sobre a qualidade da síntese.
 
 **Configurações na Rodada 1:** 5 (apenas os LLMs variam).
 
@@ -247,7 +249,7 @@ Comparar resultados dos dois experimentos é diagnóstico:
 
 | Caso | Interpretação |
 | :---- | :---- |
-| LLM bom em A **e** em B | Modelo robusto, aproveita bem qualquer contexto |
+| LLM bom em A **e** em B | Modelo robusto, aproveita bem qualquer contexto (com contextos fixos, A/B de `generation_prompt_version` isola o efeito do prompt) |
 | LLM bom em B, ruim em A | Bom sintetizador, mas falhou por retrieval ruim na sua base |
 | LLM ruim em B, bom em A | Improvável; pode indicar dependência de chunks específicos ou ruído |
 | LLM ruim em A **e** em B | Modelo fraco para o domínio |
@@ -459,7 +461,7 @@ embedding\_model     : str
 chunk\_strategy      : str    \# ex.: "fixed\_512\_overlap\_50"  
 reranker            : str    \# ou "none"  
 top\_k               : int  
-prompt\_version      : str    \# versionamento explícito do prompt RAG  
+prompt\_version      : str    \# versão do bundle de geração selecionado (= generation\_prompt\_version do YAML; ADR-015)  
 temperature         : float  
 seed                : int  
 question\_id         : str  
