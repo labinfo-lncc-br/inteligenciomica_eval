@@ -605,6 +605,376 @@ def _print_wave_map(
 
 
 @app.command()
+def smoke(
+    config: Annotated[
+        Path, typer.Option("--config", help="Path to round config YAML.")
+    ],
+    llm: Annotated[
+        str | None,
+        typer.Option(
+            "--llm",
+            help="LLM name to test (default: first in config.llms).",
+        ),
+    ] = None,
+    question_id: Annotated[
+        str | None,
+        typer.Option(
+            "--question-id",
+            help="Question ID to test (default: first loaded from benchmark).",
+        ),
+    ] = None,
+) -> None:
+    """Smoke test: 1 model x 1 question x 1 seed, end-to-end, without writing to data/.
+
+    Runs generation -> metrics -> judge for a single cell and prints a structured
+    diagnostic table covering served_model_id, model name resolution, generation
+    status (ok/404/error), judge score, embedding origin and determinism_verified.
+
+    Run BEFORE any full evaluation round to detect misconfigurations early
+    (wrong model name, endpoint not reachable, judge returning NaN, etc.).
+
+    Exits 0 only when generation produced non-empty text AND the judge returned a
+    non-NaN score.  Any other outcome exits 1 with an actionable hint message.
+    """
+    import math
+    import os
+    import tempfile
+    from types import SimpleNamespace
+
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from inteligenciomica_eval.application.services.wave_scheduler import Wave, WavePlan
+    from inteligenciomica_eval.application.use_cases.run_generation_pass import (
+        RunGenerationPassUseCase,
+    )
+    from inteligenciomica_eval.application.use_cases.run_judge_pass import (
+        RunJudgePassUseCase,
+    )
+    from inteligenciomica_eval.application.use_cases.run_metrics_pass import (
+        RunMetricsPassUseCase,
+    )
+    from inteligenciomica_eval.domain.errors import ConfigValidationError
+    from inteligenciomica_eval.domain.services.final_score import FinalScoreCalculator
+    from inteligenciomica_eval.infrastructure.config.schema import load_round_config
+    from inteligenciomica_eval.infrastructure.config.settings import RuntimeSettings
+    from inteligenciomica_eval.infrastructure.repositories.parquet_storage import (
+        ParquetStorage,
+    )
+
+    try:
+        cfg = load_round_config(config)
+    except FileNotFoundError as exc:
+        _err_console.print(f"[red]File not found:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ConfigValidationError as exc:
+        _err_console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    # Seleciona o LLM a testar
+    selected_llm = llm or cfg.llms[0]
+    if selected_llm not in cfg.llms:
+        _err_console.print(
+            f"[red]--llm {selected_llm!r} não está em config.llms: {cfg.llms}[/red]"
+        )
+        raise typer.Exit(1)
+
+    selected_seed: int = cfg.seeds[0]
+
+    settings = RuntimeSettings()
+
+    try:
+        container = build_container(cfg, settings, config_dir=config.parent)
+    except ConfigValidationError as exc:
+        _err_console.print(Panel(str(exc), title="Erro de configuração", style="red"))
+        raise typer.Exit(1) from exc
+
+    # Extrai proveniência dos probes (já executados em build_container)
+    def _as_dict(v: object) -> dict[str, object]:
+        """Extrai sub-dicts de endpoints_provenance de forma type-safe."""
+        return v if isinstance(v, dict) else {}
+
+    ep_prov: dict[str, object] = _as_dict(container.endpoints_provenance)
+    gen_prov_map = _as_dict(ep_prov.get("generators"))
+    gen_prov = _as_dict(gen_prov_map.get(selected_llm))
+    served_model_id: str = str(gen_prov.get("served_model_id", ""))
+    judge_prov = _as_dict(ep_prov.get("judge"))
+    determinism_verified: bool = bool(judge_prov.get("determinism_verified", False))
+    server_mode: str = cfg.server_mode
+
+    # Determina a URL para o LLM selecionado
+    if server_mode == "external":
+        llm_url = settings.VLLM_GENERATOR_URL  # fallback
+        try:
+            from inteligenciomica_eval.infrastructure.config.model_registry import (
+                load_model_registry,
+            )
+
+            _reg = load_model_registry(config.parent / cfg.model_registry_path)
+            for _entry in _reg.models:
+                if _entry.name == selected_llm:
+                    _env_var: str | None = getattr(_entry, "endpoint_env", None)
+                    if _env_var:
+                        llm_url = (
+                            os.environ.get(_env_var, "") or settings.VLLM_GENERATOR_URL
+                        )
+                    break
+        except Exception:
+            pass
+    else:
+        llm_url = settings.VLLM_GENERATOR_URL
+
+    # Cria o gerador via factory — o resolved model name é o que será enviado ao endpoint
+    smoke_generator = container.generator_factory(llm_url)
+    resolved_model_name: str = getattr(smoke_generator, "_model", "unknown")
+
+    # Seleciona a pergunta
+    questions = container.benchmark_loader()
+    if not questions:
+        _err_console.print("[red]Benchmark vazio — não há perguntas para testar.[/red]")
+        raise typer.Exit(1)
+
+    smoke_question = questions[0]
+    if question_id:
+        _matches = [q for q in questions if q.question_id == question_id]
+        if not _matches:
+            _err_console.print(
+                f"[red]question_id {question_id!r} não encontrado no benchmark. "
+                f"IDs disponíveis: {[q.question_id for q in questions[:5]]}[/red]"
+            )
+            raise typer.Exit(1)
+        smoke_question = _matches[0]
+
+    smoke_run_id = f"smoke__{selected_llm}"
+
+    # Cria storage TEMPORÁRIO — o smoke não grava no dataset de produção (data/)
+    # run_id passado ao construtor para que as linhas armazenadas sejam filtráveis
+    # com load(run_id=smoke_run_id) — ParquetStorage armazena run_id na proveniência.
+    _tmpdir_obj = tempfile.TemporaryDirectory(prefix="ielm_smoke_")
+    _tmpdir = _tmpdir_obj.name
+    temp_storage = ParquetStorage(
+        base_dir=Path(_tmpdir),
+        round_id=cfg.round_id,
+        run_id=smoke_run_id,
+        prompt_version=cfg.generation_prompt_version,
+    )
+
+    # Configuração mínima para satisfazer RunConfigView estruturalmente
+    _retrieval_cfg = SimpleNamespace(top_k=cfg.retrieval.top_k)
+    _smoke_cfg = SimpleNamespace(
+        phases=["A"],
+        bases=[cfg.bases[0]],
+        seeds=[selected_seed],
+        temperature=cfg.temperature,
+        retrieval=_retrieval_cfg,
+        server_mode=server_mode,
+        generator_served_model_ids={selected_llm: served_model_id},
+        judge_determinism_verified=determinism_verified,
+    )
+
+    score_weights = dict(cfg.scoring.weights)
+    score_calc = FinalScoreCalculator(weights=score_weights)
+
+    gen_pass_uc = RunGenerationPassUseCase(
+        retriever=container.retriever,
+        generator=smoke_generator,
+        writer=temp_storage,
+        reader=temp_storage,
+        config=_smoke_cfg,  # SimpleNamespace satisfaz RunConfigView estruturalmente
+    )
+    metrics_pass_uc = RunMetricsPassUseCase(
+        metric_suite=container.metric_suite,
+        deterministic=container.deterministic_metric,
+        score_calc=score_calc,
+        writer=temp_storage,
+        reader=temp_storage,
+    )
+    judge_pass_uc = RunJudgePassUseCase(
+        judge=container.rubric_judge,
+        writer=temp_storage,
+        reader=temp_storage,
+        score_calc=score_calc,
+    )
+
+    # Plano de onda mínimo: 1 onda, 1 modelo
+    _smoke_wave = Wave(
+        wave_index=0,
+        models=(selected_llm,),
+        gpu_indices=(0,),
+        vram_required_gb=0.0,
+        cells_in_wave=1,
+    )
+    _smoke_plan = WavePlan(
+        waves=(_smoke_wave,),
+        total_cells=1,
+        estimated_vram_peak_gb=0.0,
+    )
+
+    # ------------------------------------------------------------------ Passada 1: geração
+    gen_status = "unknown"
+    gen_text = ""
+    gen_error_msg = ""
+
+    try:
+        asyncio.run(
+            gen_pass_uc.execute(
+                run_id=smoke_run_id,
+                wave_plan=_smoke_plan,
+                questions=[smoke_question],
+            )
+        )
+        _frame = temp_storage.load(round_id=cfg.round_id, run_id=smoke_run_id)
+        if _frame.results:
+            gen_text = _frame.results[0].answer.generated_answer
+            gen_status = "ok" if gen_text else "empty"
+        else:
+            gen_status = "empty"
+    except Exception as exc:
+        _exc_str = str(exc)
+        if "404" in _exc_str or "model not found" in _exc_str.lower():
+            gen_status = "404"
+            gen_error_msg = "Model not found — provável divergência de nome"
+        else:
+            gen_status = "error"
+            gen_error_msg = f"{type(exc).__name__}: {_exc_str[:200]}"
+
+    # ------------------------------------------------------------------ Passada 2: métricas
+    embeddings_status = "hf_local"
+    embeddings_ok = True
+
+    if gen_text:
+        try:
+            asyncio.run(
+                metrics_pass_uc.execute(
+                    run_id=smoke_run_id,
+                    round_id=cfg.round_id,
+                    phase="A",
+                )
+            )
+        except Exception as exc:
+            embeddings_ok = False
+            embeddings_status = f"hf_local (ERRO: {type(exc).__name__})"
+
+    # ------------------------------------------------------------------ Passada 3: juiz
+    judge_score = float("nan")
+
+    try:
+        asyncio.run(
+            judge_pass_uc.execute(
+                run_id=smoke_run_id,
+                round_id=cfg.round_id,
+                phase="A",
+            )
+        )
+        _frame2 = temp_storage.load(round_id=cfg.round_id, run_id=smoke_run_id)
+        if _frame2.results:
+            judge_score = _frame2.results[0].metrics.rubric_biomed_score
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------ Diagnóstico
+    _log.info(
+        "smoke_diagnostic",
+        server_mode=server_mode,
+        llm=selected_llm,
+        served_model_id=served_model_id,
+        resolved_model_name=resolved_model_name,
+        gen_status=gen_status,
+        judge_score=None if math.isnan(judge_score) else judge_score,
+        embeddings_status=embeddings_status,
+        embeddings_ok=embeddings_ok,
+        determinism_verified=determinism_verified,
+    )
+
+    _warn_model = resolved_model_name == "model"
+
+    diag_table = Table(
+        title="[bold]ielm-eval smoke — diagnóstico[/bold]", show_header=True
+    )
+    diag_table.add_column("Campo", style="bold")
+    diag_table.add_column("Valor")
+
+    diag_table.add_row("server_mode", server_mode)
+    diag_table.add_row("llm (selecionado)", selected_llm)
+    diag_table.add_row(
+        "served_model_id (sondado)",
+        served_model_id if served_model_id else "[dim]<não sondado>[/dim]",
+    )
+    _model_cell = (
+        f"[yellow]⚠ {resolved_model_name} — nome não resolvido: confira endpoint_env/"
+        "served_model_id[/yellow]"
+        if _warn_model
+        else f"[green]{resolved_model_name}[/green]"
+    )
+    diag_table.add_row("nome enviado ao endpoint", _model_cell)
+
+    _gen_cell: str
+    if gen_status == "ok":
+        _gen_cell = "[green]ok[/green]"
+    elif gen_status == "404":
+        _gen_cell = f"[red]404 — {gen_error_msg}[/red]"
+    elif gen_status == "error":
+        _gen_cell = f"[red]erro — {gen_error_msg}[/red]"
+    else:
+        _gen_cell = f"[red]{gen_status}[/red]"
+    diag_table.add_row("status da geração", _gen_cell)
+
+    _score_cell = (
+        "[red]NaN[/red]"
+        if math.isnan(judge_score)
+        else f"[green]{judge_score:.4f}[/green]"
+    )
+    diag_table.add_row("score do juiz", _score_cell)
+    diag_table.add_row(
+        "origem dos embeddings",
+        f"[green]{embeddings_status}[/green]"
+        if embeddings_ok
+        else f"[red]{embeddings_status}[/red]",
+    )
+    diag_table.add_row(
+        "determinism_verified",
+        "[green]SIM[/green]" if determinism_verified else "[yellow]NÃO[/yellow]",
+    )
+
+    _console.print(diag_table)
+
+    # ------------------------------------------------------------------ Exit code
+    _ok = gen_status == "ok" and not math.isnan(judge_score)
+    if _ok:
+        _console.print("\n[bold green]✓ Smoke PASS[/bold green]")
+        _tmpdir_obj.cleanup()
+        return
+
+    # Falha — hints acionáveis
+    hints: list[str] = []
+    if gen_status == "404" or (_warn_model and gen_status != "ok"):
+        hints.append(
+            '• Provável divergência de nome do modelo: o nome resolvido é "model" '
+            "(fallback). Verifique endpoint_env no registry YAML e o served_model_id "
+            "sondado acima. O FIX da TAREFA-317 corrige isso em modo external."
+        )
+    if gen_status in ("empty", "error"):
+        hints.append(
+            f"• Geração falhou ({gen_status}): {gen_error_msg or 'sem texto retornado'}"
+        )
+    if math.isnan(judge_score):
+        hints.append(
+            "• Juiz retornou NaN: verifique VLLM_JUDGE_URL, template do prompt "
+            "e se o modelo juiz está carregado corretamente."
+        )
+
+    _err_console.print(
+        Panel(
+            "\n".join(hints) if hints else "Falha sem causa identificada.",
+            title="[bold red]✗ Smoke FAIL — ações recomendadas[/bold red]",
+            style="red",
+        )
+    )
+    _tmpdir_obj.cleanup()
+    raise typer.Exit(1)
+
+
+@app.command()
 def annotate(
     config: Annotated[
         Path, typer.Option("--config", help="Path to round config YAML.")

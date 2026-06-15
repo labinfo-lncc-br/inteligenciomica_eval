@@ -451,6 +451,42 @@ ielm-eval run --dry-run --config config/experiment_round1.yaml
 Saída mostra: `config_hash`, fases, contagem de células, mapa GPU/onda, endpoints
 mascarados. Qualquer erro de configuração aparece aqui, antes de consumir GPU.
 
+### Smoke run (G1 — validação ponta a ponta antes da rodada)
+
+**Execute o smoke ANTES de qualquer rodada cheia** para verificar se o endpoint
+serve o modelo correto, se o juiz retorna scores válidos e se os embeddings carregam
+sem erro.  O smoke roda 1 modelo × 1 pergunta × 1 seed nas 3 passadas (geração →
+métricas → juiz) e **não grava no dataset de produção** (usa diretório temporário).
+
+```bash
+ielm-eval smoke \
+  --config config/experiment_round1.yaml \
+  [--llm <nome_do_modelo>] \
+  [--question-id <id_da_pergunta>]
+```
+
+Sem `--llm`, usa o primeiro modelo de `config.llms`.  Sem `--question-id`, usa a
+primeira pergunta do benchmark.
+
+**Lendo o diagnóstico:**
+
+| Campo | O que indica |
+|---|---|
+| `served_model_id` | ID real servido pelo endpoint (sondado via `GET /v1/models`) |
+| `nome enviado ao endpoint` | Nome que o adaptador envia em `model=` — **⚠ WARN se `"model"`** (fallback) |
+| `status da geração` | `ok` / `404` (divergência de nome) / `error` (timeout, rede) / `empty` |
+| `score do juiz` | Float ou **NaN** (indica falha de parse ou endpoint do juiz inacessível) |
+| `origem dos embeddings` | `hf_local` (HuggingFace local, sem chamada de rede para embeddings) |
+| `determinism_verified` | `SIM` se o probe confirmou tokens idênticos para `seed=42` × 2 completions |
+
+**Exit codes:**
+
+- **0** — geração produziu texto não-vazio E juiz devolveu score não-NaN → **PASS**
+- **1** — qualquer outra condição → **FAIL** com hints acionáveis impressos no stderr
+
+Se o nome enviado ao endpoint for `"model"` (fallback) em modo `external`, aplique o
+FIX da TAREFA-317 e verifique o campo `endpoint_env` no `model_registry.yaml`.
+
 ### Execução completa
 
 ```bash

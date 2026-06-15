@@ -158,6 +158,9 @@ class DIContainer:
         agg_service: serviço de agregação de domínio.
         rank_calc: calculadora de RankScore.
         benchmark_loader: callable zero-args → lista de perguntas RF1.
+        endpoints_provenance: resultado dos probes de endpoint (ADR-014); vazio em
+            build_fake_container. Exposto para o comando ``smoke`` diagnosticar
+            served_model_id e determinism_verified sem re-executar probes.
     """
 
     retriever: RetrieverPort
@@ -177,6 +180,7 @@ class DIContainer:
     agg_service: AggregationService
     rank_calc: RankScoreCalculator
     benchmark_loader: Callable[[], list[Question]]
+    endpoints_provenance: dict[str, object] = dataclass_field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -223,10 +227,14 @@ class _VLLMGeneratorFactory:
         port_to_model: dict[int, str],
         prompt_registry: Any,  # PromptRegistry — lazy import evita dep circular
         prompt_version: str,
+        served_model_by_url: dict[str, str] | None = None,
     ) -> None:
         self._port_to_model = port_to_model
         self._prompt_registry = prompt_registry
         self._prompt_version = prompt_version
+        # Mapa {url: served_model_id} populado pelos probes de endpoint (TAREFA-317).
+        # None → {} para evitar mutabilidade acidental de default mutable.
+        self._served_model_by_url: dict[str, str] = served_model_by_url or {}
 
     def __call__(self, url: str) -> GeneratorPort:
         from inteligenciomica_eval.domain.ports import Chunk as _Chunk
@@ -234,12 +242,33 @@ class _VLLMGeneratorFactory:
             VLLMGeneratorAdapter,
         )
 
-        # Extrai porta de URL como "http://host:PORT/v1"
-        try:
-            port = int(url.split(":")[2].split("/")[0])
-            model = self._port_to_model.get(port, "model")
-        except (IndexError, ValueError):
-            model = "model"
+        # Resolução do nome do modelo — PRECEDÊNCIA (TAREFA-317):
+        # (a) served_probe: served_model_id sondado antes da rodada (externo, confiável)
+        # (b) port_layout: convenção 8000+gpu_index (ADR-012, modo managed)
+        # (c) fallback: "model" (último recurso; pode causar 404 em túnel arbitrário)
+        served = self._served_model_by_url.get(url, "")
+        if served:
+            model = served
+            _resolution = "served_probe"
+        else:
+            try:
+                port = int(url.split(":")[2].split("/")[0])
+                if port in self._port_to_model:
+                    model = self._port_to_model[port]
+                    _resolution = "port_layout"
+                else:
+                    model = "model"
+                    _resolution = "fallback"
+            except (IndexError, ValueError):
+                model = "model"
+                _resolution = "fallback"
+
+        _log.debug(
+            "generator_model_resolved",
+            url_masked=mask_url(url),
+            model=model,
+            resolution=_resolution,
+        )
 
         # Closure captura registry + version; tipos locais para satisfazer mypy.
         _registry = self._prompt_registry
@@ -637,10 +666,23 @@ def build_container(
     deterministic_metric = DeterministicMetricsAdapter()
 
     port_to_model = {spec.port: name for name, spec in model_spec_map.items()}
+
+    # Monta {url: served_model_id} para resolução preferencial pelo probe (TAREFA-317).
+    # External: _gen_urls tem URLs distintas por modelo → _gen_served_ids é confiável.
+    # Managed: _gen_urls é degenerado (todas as mesmas URL) e os probes tendem a falhar
+    #   pois os servidores ainda não subiram → served_model_by_url vazio → factory cai
+    #   no layout de porta (ADR-012), preservando comportamento atual sem regressão.
+    served_model_by_url: dict[str, str] = {
+        url: _gen_served_ids[name]
+        for name, url in _gen_urls.items()
+        if _gen_served_ids.get(name)
+    }
+
     generator_factory = _VLLMGeneratorFactory(
         port_to_model,
         prompt_registry=prompt_registry,
         prompt_version=config.generation_prompt_version,
+        served_model_by_url=served_model_by_url,
     )
 
     # --- BenchmarkLoader — precedência explícita de origem das perguntas (TAREFA-313) ---
@@ -757,6 +799,7 @@ def build_container(
         agg_service=agg_service,
         rank_calc=rank_calc,
         benchmark_loader=benchmark_loader,
+        endpoints_provenance=_ep_provenance,
     )
 
 
